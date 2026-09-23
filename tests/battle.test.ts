@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { Battle, makeZombie, pickAutoTarget } from "../src/battle/battle";
 import { TUNING } from "../src/core/tuning";
 import type { Word, WordStats, Zombie, EncounterOutcome } from "../src/core/model";
@@ -672,5 +672,105 @@ describe("消灭僵尸的按幕阳光奖励", () => {
     expect(afterFire).toBe(100 - TUNING.plantCostSun + TUNING.sunHitBonus);
     b.tick(0); // 清理死亡僵尸 → kill → Act3 奖励(滴漏 dt=0 不掺入)
     expect(b.sun).toBe(afterFire + TUNING.killSunByAct[2]);
+  });
+});
+
+describe("第 5 幕终局冲击波(AOE 破阵)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  let b: Battle;
+
+  /** 造一只存活终局 boss(speed=0 免得它走到基地触发攻城影响测试)。 */
+  function liveUltimate(): Zombie {
+    const z = makeZombie(
+      { wordId: "a", direction: "forward", teaching: false, boss: true, act: 5, ultimate: true, cycle: [{ wordId: "a", direction: "forward" }] },
+      2,
+      undefined,
+      400,
+    );
+    z.speed = 0;
+    b.zombies.push(z);
+    return z;
+  }
+
+  it("boss 存活期间按随机间隔发波,累计最多 3 次", () => {
+    b = newBattle([], {});
+    b.lastAct = 9; // 防空场误判胜利
+    liveUltimate();
+    const spy = vi.spyOn(b, "spawnShockwave");
+    vi.spyOn(Math, "random").mockReturnValue(0); // 首波=FIRST_MIN,后续=INTERVAL_MIN 已定
+    // 少量 t 连发三波
+    b.tick(TUNING.shockFirstDelayMax + 0.1);
+    expect(spy).toHaveBeenCalledTimes(1);
+    b.tick(TUNING.shockIntervalMax);
+    expect(spy).toHaveBeenCalledTimes(2);
+    b.tick(TUNING.shockIntervalMax);
+    expect(spy).toHaveBeenCalledTimes(3);
+    // 已到 3 次上限:再长时间也不再触发
+    b.tick(120);
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it("boss 阵亡 → 停止调度,已在场的波跑完消散", () => {
+    b = newBattle([], {});
+    b.lastAct = 9;
+    const z = liveUltimate();
+    const spy = vi.spyOn(b, "spawnShockwave");
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    b.tick(TUNING.shockFirstDelayMax + 0.1); // 首波已发
+    expect(spy).toHaveBeenCalledTimes(1);
+    z.hp = 0; // 击杀 boss
+    b.tick(1);
+    b.tick(TUNING.shockIntervalMax * 4);
+    expect(spy).toHaveBeenCalledTimes(1); // 不再发新波
+    // 已发的波最终全部消散
+    expect(b.shockwaves).toHaveLength(0);
+  });
+
+  it("波整列摧毁路径上全部植物:摧毁不退款,不伤僵尸/基地", () => {
+    let hits: string[] = [];
+    b = newBattle([], { onShockHit: (p) => hits.push(p.labelText) });
+    b.lastAct = 9;
+    b.sun = 300;
+    b.placePlant("a", 0)!; // 120
+    b.placePlant("a", 0)!; // 180
+    b.placePlant("b", 1)!; // 120
+    b.placePlant("b", 2)!; // 120
+    const sunBefore = b.sun;
+    const z = dormantZombie("a", 0);
+    z.x = 250; // 波径上方有一只普通僵尸,不应受影响
+    z.speed = 0; // 固定不走到基地,避免攻城伤及 baseHp 干扰断言
+    b.zombies.push(z);
+    const hpBefore = z.hp;
+    const baseBefore = b.baseHp;
+    b.spawnShockwave();
+    // 光带从右缘以 shockSpeed 左移,反复推进直到越左缘消散
+    let guard = 0;
+    while (b.shockwaves.length > 0 && guard < 2000) {
+      b.tick(1 / 60);
+      guard++;
+    }
+    expect(b.plants).toHaveLength(0); // 四株全灭
+    expect(hits).toHaveLength(4);
+    // 摧毁不退款:期间仅阳光滴漏增加(sunBefore + 6/s × 耗时)
+    expect(b.sun).toBeCloseTo(sunBefore + TUNING.sunDripPerSecond * (guard / 60), 5);
+    expect(b.shockwaves).toHaveLength(0); // 消散
+    expect(b.baseHp).toBe(baseBefore); // 不伤基地
+    expect(z.hp).toBe(hpBefore); // 不伤僵尸
+  });
+
+  it("暂停(升级面板)时波停走;恢复后继续", () => {
+    b = newBattle([], {});
+    b.lastAct = 9;
+    b.spawnShockwave();
+    const x0 = b.shockwaves[0].x;
+    b.paused = true;
+    b.tick(1);
+    expect(b.shockwaves[0].x).toBe(x0); // 冻结
+    b.paused = false;
+    b.tick(0.1);
+    expect(b.shockwaves[0].x).toBeLessThan(x0); // 恢复推进
   });
 });

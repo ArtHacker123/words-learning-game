@@ -193,6 +193,10 @@ async function runSession(ui: UI, day: number, chunkIdx: number, startIdx = 0): 
       },
       onNibble: (p) => ui.setMsg(`「${p.labelText}」正在被僵尸啃食…`),
       onVore: (p) => ui.setMsg(`「${p.labelText}」植株被啃食殆尽!`),
+      onShockHit: (p) => {
+        ui.setMsg(`「${p.labelText}」被终局冲击波摧毁!`);
+        updateHud(ui, battle);
+      },
       onDefeat: () => finishSession(),
       onVic: () => finishSession(),
     },

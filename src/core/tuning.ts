@@ -21,6 +21,13 @@ export const TUNING = {
   ultimateBossHpScale: 3, // 终局 boss 总血 = 该词 Act4 头目 HP × N(恒定,不随词段数变化)
   ultimateBossSpeed: 110, // 终局 boss 移速(跨 lane 压境)
   ultimateSiegeDamage: 20, // 终局 boss 到岸每口咬基地伤害
+  shockCount: 3, // 终局 boss 存活期间随机冲击波次数上限
+  shockTw: 60, // 冲击波光带宽度(px)
+  shockSpeed: 640, // 冲击波右→左扫速(px/s),跨全场约 1.2s
+  shockFirstDelayMin: 2, // 第 5 幕开启后首波随机延迟下限(s)
+  shockFirstDelayMax: 5, // 首波随机延迟上限(s)
+  shockIntervalMin: 4, // 相邻两次冲击波随机间隔下限(s)
+  shockIntervalMax: 9, // 相邻两次冲击波随机间隔上限(s)
   // 单株武器升级
   upgradeReloadCost: 90, // 急速装填:1.5s → 1.0s
   upgradeDmgCostBase: 150, // 破甲弹药首级;每级 +120

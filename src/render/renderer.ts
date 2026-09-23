@@ -171,6 +171,10 @@ export class BattleRenderer {
     for (const s of this.shots) {
       this.drawShot(ctx, s, laneH);
     }
+    // 终局冲击波:竖排光带右→左横扫(绘制在植物之上,揭示威压)
+    for (const sw of this.battle.shockwaves) {
+      this.drawShockwave(ctx, sw.x, sw.speed);
+    }
 
     // 升级暂停:轻微压暗 + 角标提示(战斗冻结)
     if (this.battle.paused) {
@@ -275,6 +279,36 @@ export class BattleRenderer {
     ctx.beginPath();
     ctx.arc(x, y, 3.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  /** 终局冲击波:全高竖直光带(亮前端 + 尾迹渐隐),右→左推进震颤。 */
+  private drawShockwave(ctx: CanvasRenderingContext2D, x: number, speed: number): void {
+    const h = this.canvas.clientHeight;
+    const tw = TUNING_RE.shockTw;
+    const jitter = Math.sin((this.time / 38) % (Math.PI * 2)) * 2;
+    const frontX = x + jitter;
+    const tint = Math.min(1, speed / 700);
+    ctx.save();
+    // 尾迹:从后缘向左渐变淡出
+    const trail = ctx.createLinearGradient(frontX - tw, 0, frontX, 0);
+    trail.addColorStop(0, `rgba(140,90,255,0)`);
+    trail.addColorStop(0.7, `rgba(200,140,255,0.35)`);
+    trail.addColorStop(1, `rgba(255,255,255,0.75)`);
+    ctx.fillStyle = trail;
+    ctx.fillRect(frontX - tw, 0, tw, h);
+    // 前缘亮线
+    ctx.fillStyle = `rgba(255,250,230,${0.55 + 0.25 * tint})`;
+    ctx.fillRect(frontX - 3, 0, 3, h);
+    // 纵向细涟漪
+    ctx.strokeStyle = `rgba(255,255,255,${0.25 * tint})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let y = 4; y < h; y += 14) {
+      ctx.moveTo(frontX + 2, y);
+      ctx.lineTo(frontX + 2 + Math.sin((y / 6 + this.time / 90) % (Math.PI * 2)) * 3, y);
+    }
+    ctx.stroke();
+    ctx.restore();
   }
 
   private spriteArgs(z: Zombie): SpriteArgs {
@@ -441,6 +475,8 @@ export class BattleRenderer {
 }
 
 const TUNING_ROLE = { reloadSeconds: 1.5 };
+
+const TUNING_RE = { shockTw: 60 };
 
 /** 僵尸行走动画参数(纯程序化,按需微调) */
 const Z_ANIM = {

@@ -60,6 +60,13 @@ export interface Plant {
   freezeStun: boolean; // 凝固弹
 }
 
+/** 终局冲击波:整场竖排光带,右→左横扫,摧毁路径上所有植物后消散(不伤僵尸/基地) */
+export interface Shockwave {
+  id: string;
+  x: number; // 光带前缘 x(px),向左推进
+  speed: number; // px/s
+}
+
 export interface BattleEvents {
   /** 僵尸被击倒时:记录本次回忆 */
   onKill?: (outcome: EncounterOutcome) => void;
@@ -71,6 +78,7 @@ export interface BattleEvents {
   onBaseHit?: (zombie: Zombie) => void;
   onNibble?: (plant: Plant, zombie: Zombie) => void; // 僵尸撞上植物开始啃食
   onVore?: (plant: Plant) => void; // 植物被啃食殆尽(移除)
+  onShockHit?: (plant: Plant) => void; // 植物被终局冲击波摧毁(不退款)
   onDefeat?: () => void;
   onVic?: () => void;
 }
@@ -78,6 +86,7 @@ export interface BattleEvents {
 export class Battle {
   zombies: Zombie[] = [];
   plants: Plant[] = [];
+  shockwaves: Shockwave[] = [];
   sun = 100;
   baseHp = 100;
   combo = 0;
@@ -103,6 +112,10 @@ export class Battle {
   private victory = false;
   paused = false; // true=升级面板等场景整体冻结:时间/僵尸推进/装弹/自动开火全停
   private fieldIsReady = false;
+  // 第 5 幕冲击波调度:终局 boss 存活期间随机发波,累计最多 shockCount 次
+  private shockArmed = false;
+  private shockRemaining = 0;
+  private shockTimer = 0;
 
   constructor(
     options: {
@@ -225,6 +238,10 @@ export class Battle {
       }
     }
 
+    // 第 5 幕终局冲击波:终局 boss 存活期间随机发波(最多 shockCount 次);
+    // 整场竖排光带右→左横扫,摧毁路径上所有植物后于左侧消散(不伤僵尸/基地)
+    this.tickShockwaves(dt);
+
     // 植物装弹恢复;哑火持续到救援冷却结束(错配后 3s 内不可开火)
     for (const p of this.plants) {
       if (p.reloadRemain > 0) p.reloadRemain -= dt;
@@ -285,6 +302,66 @@ export class Battle {
     const free = all.filter((l) => !this.zombies.some((z) => z.lane === l));
     const source = free.length >= batch ? shuffle(free) : shuffle(all);
     return source.slice(0, batch);
+  }
+
+  /**
+   * 终局冲击波:调度 + 推进 + 命中 + 消散。
+   * - 首次发现存活终局 boss(z.ultimate && hp>0)时武装,首波延迟随机 [firstDelayMin, firstDelayMax];
+   * - 之后每隔随机 [intervalMin, intervalMax] 发一波,累计最多 shockCount 次;
+   * - boss 阵亡即停止调度(已在场的波照常跑完);
+   * - 每波**从终局 boss 中心点**起向左扫,路径上(整列)植物全灭(不退款)后于左缘消散。
+   */
+  private tickShockwaves(dt: number): void {
+    const ultimate = this.zombies.find((z) => z.ultimate && z.hp > 0);
+    const ultimateAlive = !!ultimate;
+    if (ultimateAlive && !this.shockArmed) {
+      // 第 5 幕终局 boss 首次在场:武装并安排首波随机延迟
+      this.shockArmed = true;
+      this.shockRemaining = TUNING.shockCount;
+      this.shockTimer = randBetween(TUNING.shockFirstDelayMin, TUNING.shockFirstDelayMax);
+    }
+    if (!this.shockArmed || this.shockRemaining <= 0) {
+      // 未武装 / 额度用尽;boss 已死则维持 armed=false(不再重启)
+      if (!ultimateAlive && this.shockArmed) this.shockArmed = false;
+    } else if (ultimateAlive) {
+      this.shockTimer -= dt;
+      if (this.shockTimer <= 0) {
+        // 波从 boss 中心或右侧身缘发出
+        this.spawnShockwave(ultimate!.x + ZOMBIE_SPRITE_CX + TUNING.shockTw / 2);
+        this.shockRemaining -= 1;
+        this.shockTimer = randBetween(TUNING.shockIntervalMin, TUNING.shockIntervalMax);
+      }
+    }
+
+    // 推进 + 命中 + 消散
+    const remaining: Shockwave[] = [];
+    for (const sw of this.shockwaves) {
+      sw.x -= sw.speed * dt;
+      // 竖排光带扫过的整列植物全灭:|px - sw.x| <= tw/2(波宽覆盖该列)
+      const hit = this.plants.filter((p) => Math.abs(plantX(p) - sw.x) <= TUNING.shockTw / 2);
+      for (const p of hit) {
+        const idx = this.plants.indexOf(p);
+        if (idx >= 0) this.plants.splice(idx, 1);
+        this.events.onShockHit?.(p);
+      }
+      if (sw.x <= -TUNING.shockTw) continue; // 已越出左缘 → 消散
+      remaining.push(sw);
+    }
+    this.shockwaves = remaining;
+  }
+
+  /**
+   * 手动发射一道冲击波(测试/调试用;正常由 tickShockwaves 调度)。
+   * 未给定 startX 时默认从终局 boss 中心点发出;无 boss 则退化为画布右缘。
+   */
+  spawnShockwave(startX?: number): void {
+    const ultimate = this.zombies.find((z) => z.ultimate && z.hp > 0);
+    const origin = startX ?? (ultimate ? ultimate.x + ZOMBIE_SPRITE_CX + TUNING.shockTw / 2 : this.fieldWidth + TUNING.shockTw / 2);
+    this.shockwaves.push({
+      id: `sw${Math.random().toString(36).slice(2)}`,
+      x: origin,
+      speed: TUNING.shockSpeed,
+    });
   }
 
   damageOnReach(z: Zombie): number {
@@ -644,6 +721,16 @@ function shuffle<T>(arr: T[]): T[] {
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
+}
+
+/** 植物格子的像素坐标(与 renderer.drawPlant 的 x 一致)。 */
+function plantX(p: Plant): number {
+  return PLANT_ORIGIN_X + p.cellX * PLANT_CELL_W;
+}
+
+/** [min, max] 闭区间随机数。 */
+function randBetween(min: number, max: number): number {
+  return min + Math.random() * (max - min);
 }
 
 /** 将僵尸的词卡方向换算成期望答案文本:forward 显示该词的 foreign,reverse 显示 chinese */
