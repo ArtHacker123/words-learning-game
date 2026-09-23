@@ -1,7 +1,7 @@
-import type { Word } from "./core/model";
+import type { Word, ProfileId } from "./core/model";
 import { TUNING, ACT_PRESSURE } from "./core/tuning";
 import wordHash from "./core/hash";
-import { saveWords, saveStats, getStatsByWordId, getAllWords, getMeta, setMeta, saveSnapshot, getSnapshot, deleteSnapshot, resetProgress } from "./store/db";
+import { saveWords, saveStats, getStatsByWordId, getAllWords, getMeta, setMeta, saveSnapshot, getSnapshot, deleteSnapshot, resetProfile, getActiveProfile, setActiveProfile } from "./store/db";
 import { initWordStats, buildDailyChunks, commitOutcome, graduateBoss, ensureChunks } from "./scheduler/planner";
 import { eligibleForDiamond } from "./core/awards";
 import { Battle, pickAutoTarget } from "./battle/battle";
@@ -11,49 +11,79 @@ import { UI, parseWordLines } from "./ui/ui";
 export async function initApp(): Promise<void> {
   const root = document.getElementById("app")!;
   const ui = new UI(root);
+  let profile: ProfileId = await getActiveProfile();
+  ui.state.profile = profile;
+
+  /** 载入当前词库的 words/stats(导入/切换词库后共用) */
+  async function loadProfile(): Promise<void> {
+    const allWords = await getAllWords(profile);
+    const stats = await getStatsByWordId(profile);
+    ui.state.words = allWords;
+    ui.state.statsByWord = stats;
+    ui.state.profile = profile;
+  }
+
+  async function refreshMenu(): Promise<void> {
+    await loadProfile();
+    ui.updateHud();
+    ui.renderMainMenu();
+  }
+
+  ui.onSwitchProfile(async (id) => {
+    if (id === profile) return;
+    profile = id;
+    await setActiveProfile(id);
+    const today = (await getMeta(profile, "day")) ?? 1;
+    ui.state.today = today;
+    const diamond = (await getMeta(profile, "diamond")) ?? 0;
+    ui.state.diamond = diamond;
+    const snap = await getSnapshot(profile, today);
+    if (snap) {
+      ui.state.plans = snap.plans;
+      ui.state.sessionIdx = snap.played;
+      ui.state.plan = snap.plans[snap.played] ?? null;
+    } else {
+      ui.state.plans = [];
+      ui.state.plan = null;
+      ui.state.sessionIdx = 0;
+    }
+    await refreshMenu();
+  });
 
   root.addEventListener("click", () => { /* keep layout simple */ });
 
   ui.onImport(async (lines) => {
     const pairs = parseWordLines(lines);
     if (!pairs.length) return;
-    const existing = new Set((await getAllWords()).map((w) => w.id));
+    const existing = new Set((await getAllWords(profile)).map((w) => w.id));
     const words: Word[] = [];
     for (const p of pairs) {
       const id = wordHash(p.foreign, p.chinese);
       if (existing.has(id)) continue;
-      const fresh: Word = { id, foreign: p.foreign, chinese: p.chinese };
+      const fresh: Word = { id, foreign: p.foreign, chinese: p.chinese, profile };
       words.push(fresh);
     }
-    if (words.length) await saveWords(words);
+    if (words.length) await saveWords(profile, words);
     ui.log(`导入 ${words.length} 词`);
-    const allWords = await getAllWords();
-    const stats = await getStatsByWordId();
-    ui.state.words = allWords;
-    ui.state.statsByWord = stats;
-    ui.renderMainMenu();
+    await refreshMenu();
   });
 
   ui.onSkipImport(async () => {
-    const allWords = await getAllWords();
-    const stats = await getStatsByWordId();
-    ui.state.words = allWords;
-    ui.state.statsByWord = stats;
-    ui.renderMainMenu();
+    await refreshMenu();
   });
 
   ui.onCreatePlan(async () => {
-    const today = (await getMeta("day")) ?? 1;
-    const allWords = await getAllWords();
+    const today = (await getMeta(profile, "day")) ?? 1;
+    const allWords = await getAllWords(profile);
     if (!allWords.length) return;
-    const existing = await getSnapshot(today);
+    const existing = await getSnapshot(profile, today);
     if (existing) {
       // 当天已有快照:恢复当日分块计划与基线,不再重初始化、不覆盖基线(当天体验保持一致)。
       // 分块上线前的旧快照只有单 plan(可能只有 4 幕)→ ensureChunks 统一迁移成分块结构并补终局幕。
       const snap = ensureChunks(existing);
-      await saveSnapshot(snap);
+      await saveSnapshot(profile, snap);
       ui.state.words = allWords;
-      ui.state.statsByWord = await getStatsByWordId();
+      ui.state.statsByWord = await getStatsByWordId(profile);
       ui.state.plans = snap.plans;
       ui.state.sessionIdx = snap.plans.length > 0 ? snap.played : 0;
       ui.state.plan = snap.plans[snap.played] ?? null;
@@ -61,7 +91,7 @@ export async function initApp(): Promise<void> {
       ui.renderMainMenu();
       return;
     }
-    const stats = await getStatsByWordId();
+    const stats = await getStatsByWordId(profile);
     const newList = allWords.filter((w) => !stats.has(w.id));
     // 初始化未学过词的 stats,introducedDay=today
     for (const w of newList) {
@@ -70,9 +100,9 @@ export async function initApp(): Promise<void> {
     }
     // 分块计划:一局=一块(≤sessionWordCap 词),按序推进覆盖当日全部待复习词
     const plans = buildDailyChunks(allWords, stats, today, TUNING.sessionWordCap);
-    await saveStats([...stats.values()]);
-    await setMeta("day", today);
-    await saveSnapshot({ day: today, plans, played: 0, stats: [...stats.values()] });
+    await saveStats(profile, [...stats.values()]);
+    await setMeta(profile, "day", today);
+    await saveSnapshot(profile, { day: today, plans, played: 0, stats: [...stats.values()], profile });
     ui.state.words = allWords;
     ui.state.statsByWord = stats;
     ui.state.plans = plans;
@@ -83,9 +113,9 @@ export async function initApp(): Promise<void> {
   });
 
   ui.onNextDay(async () => {
-    const today = (await getMeta("day")) ?? 1;
-    await setMeta("day", today + 1);
-    await deleteSnapshot(today); // 当日快照次日即失效,清理待重建档
+    const today = (await getMeta(profile, "day")) ?? 1;
+    await setMeta(profile, "day", today + 1);
+    await deleteSnapshot(profile, today); // 当日快照次日即失效,清理待重建档
     ui.state.plan = null;
     ui.state.plans = [];
     ui.state.sessionIdx = 0;
@@ -94,8 +124,8 @@ export async function initApp(): Promise<void> {
   });
 
   ui.onReset(async () => {
-    await resetProgress(); // 清学习进度/快照,day→1、diamond→0,词表保留
-    const allWords = await getAllWords();
+    await resetProfile(profile); // 清当前词库学习进度/快照,day→1、diamond→0,其词表保留
+    const allWords = await getAllWords(profile);
     ui.state.words = allWords;
     ui.state.statsByWord = new Map();
     ui.state.plans = [];
@@ -103,7 +133,7 @@ export async function initApp(): Promise<void> {
     ui.state.sessionIdx = 0;
     ui.state.today = 1;
     ui.state.diamond = 0;
-    ui.log("已复位:回到第 1 天,词表保留,全部重新计为新词");
+    ui.log("已复位:当前词库回到第 1 天,词表保留,全部重新计为新词");
     ui.renderMainMenu();
   });
 
@@ -115,26 +145,26 @@ export async function initApp(): Promise<void> {
       document.createElement("div"),
       document.createElement("button"),
     );
-    await runSession(ui, plan.day, ui.state.sessionIdx, 0);
+    await runSession(ui, profile, plan.day, ui.state.sessionIdx, 0);
   });
 
   // 词库非空 → 跳过导入,直接进主菜单
-  const today = (await getMeta("day")) ?? 1;
+  const today = (await getMeta(profile, "day")) ?? 1;
   ui.state.today = today;
-  const diamond = (await getMeta("diamond")) ?? 0;
+  const diamond = (await getMeta(profile, "diamond")) ?? 0;
   ui.state.diamond = diamond;
   // 同一天刷新/回访:恢复当日分块计划与推进进度(played),菜单按进度展示
-  const snap = await getSnapshot(today);
+  const snap = await getSnapshot(profile, today);
   if (snap) {
     const restored = ensureChunks(snap);
-    if (restored !== snap) await saveSnapshot(restored); // 旧单 plan 档落库为分块结构,runSession 才拿得到 plans[]
+    if (restored !== snap) await saveSnapshot(profile, restored); // 旧单 plan 档落库为分块结构,runSession 才拿得到 plans[]
     ui.state.plans = restored.plans;
     ui.state.sessionIdx = restored.played;
     ui.state.plan = restored.plans[restored.played] ?? null;
   }
-  const allWords = await getAllWords();
+  const allWords = await getAllWords(profile);
   if (allWords.length) {
-    const stats = await getStatsByWordId();
+    const stats = await getStatsByWordId(profile);
     ui.state.words = allWords;
     ui.state.statsByWord = stats;
     ui.renderMainMenu();
@@ -142,24 +172,24 @@ export async function initApp(): Promise<void> {
   ui.updateHud();
 }
 
-async function runSession(ui: UI, day: number, chunkIdx: number, startIdx = 0): Promise<void> {
-  const raw = await getSnapshot(day);
+async function runSession(ui: UI, profile: ProfileId, day: number, chunkIdx: number, startIdx = 0): Promise<void> {
+  const raw = await getSnapshot(profile, day);
   if (!raw) {
     ui.renderMainMenu();
     return;
   }
   const snap = ensureChunks(raw); // 迁移防御:旧单 plan 档转分块结构(幂等),并落库保持 DB 一致
-  if (snap !== raw) await saveSnapshot(snap);
+  if (snap !== raw) await saveSnapshot(profile, snap);
   if (!snap.plans[chunkIdx]) {
     ui.renderMainMenu();
     return;
   }
   const daySnap = snap; // 闭包(结算/重开)里保持非空类型
   const plan = snap.plans[chunkIdx];
-  const allWords = await getAllWords();
+  const allWords = await getAllWords(profile);
   const words = new Map(allWords.map((w) => [w.id, w]));
   // 生活账本 vs 当日基线:战斗难度用快照基线(当天各局一致),结算只写生活账本(一天一记)。
-  const liveStats = new Map(await getStatsByWordId());
+  const liveStats = new Map(await getStatsByWordId(profile));
   const battleStats = snap ? new Map(snap.stats.map((s) => [s.wordId, s])) : liveStats;
 
   const field = document.querySelector<HTMLCanvasElement>("#field")!;
@@ -302,7 +332,7 @@ async function runSession(ui: UI, day: number, chunkIdx: number, startIdx = 0): 
         updated.set(id, graduateBoss(s));
       }
     }
-    await saveStats([...updated.values()]);
+    await saveStats(profile, [...updated.values()]);
     // 菜单「已学 N 词」等展示刷新为最新账本,不再停留在开场快照
     ui.state.statsByWord = updated;
     ui.state.words = [...words.values()];
@@ -323,8 +353,8 @@ async function runSession(ui: UI, day: number, chunkIdx: number, startIdx = 0): 
     // 钻石奖励:五幕全通 + 基地无损 + 当天未发过 → +1(跨天累计)
     let diamondNote = "";
     if (won) {
-      const diamondTotal = (await getMeta("diamond")) ?? 0;
-      const lastAwardDay = await getMeta("diamondDay");
+      const diamondTotal = (await getMeta(profile, "diamond")) ?? 0;
+      const lastAwardDay = await getMeta(profile, "diamondDay");
       const granted = eligibleForDiamond({
         won,
         baseHp: battle.baseHp,
@@ -334,8 +364,8 @@ async function runSession(ui: UI, day: number, chunkIdx: number, startIdx = 0): 
         today: plan.day,
       });
       if (granted) {
-        await setMeta("diamond", diamondTotal + 1);
-        await setMeta("diamondDay", plan.day);
+        await setMeta(profile, "diamond", diamondTotal + 1);
+        await setMeta(profile, "diamondDay", plan.day);
         ui.state.diamond = diamondTotal + 1;
         diamondNote = `<div style="color:#74d7ff;font-weight:700;">💎 获得 1 颗钻石(五幕全通 · 基地无损)</div>`;
       }
@@ -350,7 +380,7 @@ async function runSession(ui: UI, day: number, chunkIdx: number, startIdx = 0): 
       // 分块推进:本块胜利即 played+1 落库;还有剩余块 → 直接进下一块,否则今日完成
       const nextIdx = chunkIdx + 1;
       daySnap.played = nextIdx;
-      await saveSnapshot(daySnap);
+      await saveSnapshot(profile, daySnap);
       ui.state.sessionIdx = nextIdx;
       if (nextIdx < daySnap.plans.length) {
         const next = daySnap.plans[nextIdx];
@@ -365,7 +395,7 @@ async function runSession(ui: UI, day: number, chunkIdx: number, startIdx = 0): 
               document.createElement("div"),
               document.createElement("button"),
             );
-            void runSession(ui, day, nextIdx, 0);
+            void runSession(ui, profile, day, nextIdx, 0);
           },
         );
       } else {
@@ -398,7 +428,7 @@ async function runSession(ui: UI, day: number, chunkIdx: number, startIdx = 0): 
       document.createElement("div"),
       document.createElement("button"),
     );
-    void runSession(ui, plan.day, chunkIdx, failIdx);
+    void runSession(ui, profile, plan.day, chunkIdx, failIdx);
   }
 }
 

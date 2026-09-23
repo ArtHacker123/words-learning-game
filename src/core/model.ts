@@ -1,16 +1,31 @@
 export type Language = "foreign" | "chinese";
 
+/** 词库/语言对标识:每套独立的词表、进度、天数与钻石,互不影响。 */
+export type ProfileId = "en" | "jp";
+
+/** 固定两套语言对(主界面下拉切换) */
+export const PROFILES: { id: ProfileId; name: string }[] = [
+  { id: "en", name: "中文⇄英文" },
+  { id: "jp", name: "中文⇄日语" },
+];
+
+export function profileName(id: ProfileId): string {
+  return PROFILES.find((p) => p.id === id)?.name ?? id;
+}
+
 export interface Word {
   id: string;
   foreign: string;
   chinese: string;
+  profile: ProfileId;
 }
 
 export type Direction = "forward" | "reverse";
 
-/** 记忆状态:会话结果与统计字段 */
+/** 记忆状态:会话结果与统计字段(每个词库一份;profile 落库时由存储层补齐) */
 export interface WordStats {
   wordId: string;
+  profile?: ProfileId;
   intervalRung: number; // 0..6,对应阶梯下标
   threatIndex: number;
   introducedDay: number;
@@ -57,6 +72,7 @@ export interface DailyPlan {
 /** 当日快照:首局建档时固化。当天所有局都用同一份计划与基线难度,保证体验一致。 */
 export interface DaySnapshot {
   day: number;
+  profile?: ProfileId;
   /** 当日分块计划:一局=一块(每块 ≤ sessionWordCap 词),顺序即推进顺序;跨块互不重叠。 */
   plans: DailyPlan[];
   /** 已胜利完结的块数(推进指针):失败/未打完不计入;只有块胜利才 +1。 */

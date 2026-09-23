@@ -2,7 +2,9 @@ import type {
   Word,
   DailyPlan,
   WordStats,
+  ProfileId,
 } from "../core/model";
+import { PROFILES, profileName } from "../core/model";
 import { countPlanWords } from "../scheduler/planner";
 import { TUNING } from "../core/tuning";
 
@@ -34,6 +36,7 @@ export interface AppState {
   combo: number;
   diamond: number; // 累计钻石(五幕全通且基地无损,每天最多 1 颗,跨天累计)
   log: string[];
+  profile: ProfileId; // 当前词库(语言对)
 }
 
 export class UI {
@@ -52,6 +55,7 @@ export class UI {
     combo: 0,
     diamond: 0,
     log: [],
+    profile: "en",
   };
 
   private handlers: {
@@ -61,6 +65,7 @@ export class UI {
     onNextDay?: () => void;
     onCreatePlan?: () => void;
     onReset?: () => void;
+    onSwitchProfile?: (id: ProfileId) => void;
     onToggleUpgradeMode?: () => void;
     onUpgradeBuy?: (key: string) => void;
     onUpgradeClose?: () => void;
@@ -77,6 +82,7 @@ export class UI {
     <div class="app">
       <header class="hud">
         <div class="hud-diamond" title="累计钻石:每达成「五幕全通 + 基地无损」获得 1 颗,每天最多 1 颗">💎 <span id="diamond">0</span></div>
+        <div>词库 <span id="profileName">中文⇄英文</span></div>
         <div>第 <span id="today">1</span> 天</div>
         <div>阳光 <span id="sun">0</span></div>
         <div>基地 <span id="base">100</span></div>
@@ -92,12 +98,21 @@ export class UI {
     this.screen(`
       <div class="panel">
         <h2>词域攻防</h2>
-        <p>每行一个词条:外语,中文</p>
-        <textarea id="wordInput" rows="8" placeholder="apple,苹果&#10;猫,ねこ"></textarea>
+        <p class="profile-row">词库
+          <select id="profileSelect" title="切换语言对,各自独立进度">
+            ${PROFILES.map((p) => `<option value="${p.id}" ${p.id === this.state.profile ? "selected" : ""}>${p.name}</option>`).join("")}
+          </select>
+        </p>
+        <p>为 <b>${profileName(this.state.profile)}</b> 导入词表(每行一个词条:外语,中文)</p>
+        <textarea id="wordInput" rows="8" placeholder="apple,苹果&#10;ねこ,猫"></textarea>
         <button id="importBtn">导入词表</button>
         <button id="skipImportBtn">跳过,先不用导入</button>
         <p id="importMsg"></p>
       </div>`);
+    this.root.querySelector("#profileSelect")!.addEventListener("change", (e) => {
+      const id = (e.target as HTMLSelectElement).value as ProfileId;
+      this.handlers.onSwitchProfile?.(id);
+    });
     this.root.querySelector("#importBtn")!.addEventListener("click", () => {
       const ta = this.root.querySelector<HTMLTextAreaElement>("#wordInput")!;
       this.handlers.onImport?.(ta.value.split("\n"));
@@ -130,6 +145,11 @@ export class UI {
     this.screen(`
       <div class="panel">
         <h2>词域攻防</h2>
+        <p class="profile-row">词库
+          <select id="profileSelect" title="切换语言对,各自独立进度">
+            ${PROFILES.map((p) => `<option value="${p.id}" ${p.id === this.state.profile ? "selected" : ""}>${p.name}</option>`).join("")}
+          </select>
+        </p>
         <p>词表 ${words.length} 词 | 已学 ${learned}</p>
         ${total === 0 ? "" : `<p>今日复习 ${total} 局 · 已完成 ${Math.min(sessionIdx, total)} 局 · 每局至多 ${TUNING.sessionWordCap} 词</p>`}
         ${done ? `<p>今日 ${total} 局全部完成,可以歇了 💪</p>` : ""}
@@ -139,6 +159,10 @@ export class UI {
         <button id="resetBtn" style="border-color:#c0392b;color:#e74c3c;">复位</button>
         <div id="stats"></div>
       </div>`);
+    this.root.querySelector("#profileSelect")!.addEventListener("change", (e) => {
+      const id = (e.target as HTMLSelectElement).value as ProfileId;
+      this.handlers.onSwitchProfile?.(id);
+    });
     this.root.querySelector("#startBtn")!.addEventListener("click", () => {
       if (!empty && total > 0) this.handlers.onStartBattle?.();
       else if (!empty) this.handlers.onCreatePlan?.();
@@ -238,6 +262,8 @@ export class UI {
 
   updateHud(): void {
     this.root.querySelector("#today")!.textContent = String(this.state.today);
+    const profileNameEl = this.root.querySelector("#profileName");
+    if (profileNameEl) profileNameEl.textContent = profileName(this.state.profile);
     if (this.state) {
       const sun = this.root.querySelector("#sun")!;
       const base = this.root.querySelector("#base")!;
@@ -304,6 +330,7 @@ export class UI {
   onCreatePlan(fn: () => void): void { this.handlers.onCreatePlan = fn; }
   onNextDay(fn: () => void): void { this.handlers.onNextDay = fn; }
   onReset(fn: () => void): void { this.handlers.onReset = fn; }
+  onSwitchProfile(fn: (id: ProfileId) => void): void { this.handlers.onSwitchProfile = fn; }
   onToggleUpgradeMode(fn: () => void): void { this.handlers.onToggleUpgradeMode = fn; }
   onUpgradeBuy(fn: (key: string) => void): void { this.handlers.onUpgradeBuy = fn; }
   onUpgradeClose(fn: () => void): void { this.handlers.onUpgradeClose = fn; }
