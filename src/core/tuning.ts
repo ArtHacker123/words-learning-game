@@ -19,6 +19,7 @@ export const TUNING = {
   bossHp: 9, // 头目血量(基数上按记忆档折算,仍远厚于普通怪)
   bossSpeed: 75, // 头目移动速度(快于普通僵尸,逼抢走位)
   ultimateBossHpScale: 3, // 终局 boss 总血 = 该词 Act4 头目 HP × N(恒定,不随词段数变化)
+  act5HpMultiplier: 2, // 第 5 幕僵尸血量倍率(终局 boss 整体翻倍)
   ultimateBossSpeed: 110, // 终局 boss 移速(跨 lane 压境)
   ultimateSiegeDamage: 20, // 终局 boss 到岸每口咬基地伤害
   shockCount: 3, // 终局 boss 存活期间随机冲击波次数上限
@@ -34,6 +35,7 @@ export const TUNING = {
   upgradeDmgMaxLevel: 2, // 破甲弹药最多 2 级(+1/+2)
   upgradeAutoFireCost: 180, // 自动发射:装填完成自动打同 lane 匹配非教学僵尸
   upgradeFreezeCost: 160, // 凝固弹:命中冻结 2.5s
+  freezeFireIntervalScale: 2, // 凝固弹株发射间隔 = 该株装填 × 该系数(射速减半的冷却)
   freezeStunSeconds: 2.5, // 普通僵尸冻结时长
   bossStunScale: 0.4, // Boss 冻结时长系数(2.5*0.4=1s)
   eatPlantSeconds: 2, // 僵尸撞上植物后啃食时长,期间植物不消失、僵尸不前进

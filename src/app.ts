@@ -514,7 +514,7 @@ function bindFieldClick(battle: Battle, field: HTMLCanvasElement, ui: UI, render
       { key: "reload", name: "⚡ 急速装填", desc: "装弹 1.5s → 1.0s", cost: battle.upgradeCost(p, "reload"), applied: p.reloadBoost },
       { key: "dmg", name: "🔱 破甲弹药", desc: `命中伤害 +1(当前 +${p.dmgBoost})`, cost: battle.upgradeCost(p, "dmg"), applied: p.dmgBoost > 0 },
       { key: "autoFire", name: "🤖 自动发射", desc: "装填完自动打同 lane 匹配非教学僵尸", cost: battle.upgradeCost(p, "autoFire"), applied: p.autoFire },
-      { key: "freeze", name: "🧊 凝固弹", desc: "命中冻结僵尸 2.5s(Boss 1s)", cost: battle.upgradeCost(p, "freeze"), applied: p.freezeStun },
+      { key: "freeze", name: "🧊 凝固弹", desc: "命中冻结 2.5s(Boss 1s)·射速减半(间隔=装填×2)", cost: battle.upgradeCost(p, "freeze"), applied: p.freezeStun },
     ];
     ui.renderUpgradePanel(p.labelText, entries);
   };

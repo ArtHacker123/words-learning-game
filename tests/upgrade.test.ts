@@ -80,10 +80,10 @@ describe("Battle: 单株武器升级", () => {
     expect(p.dmgBoost).toBe(1);
     expect(p.autoFire).toBe(true);
     expect(p.freezeStun).toBe(true);
-    // 叠加后一株即可验证其效果:装弹 1.0s + 一发 2 伤害 + 冻结
+    // 叠加后一株即可验证其效果:装弹 1.0s × 凝固弹 2 = 2.0s 间隔 + 一发 2 伤害 + 冻结
     const z = zA();
     b.fire(p, z);
-    expect(p.reloadRemain).toBe(TUNING.upgradeReloadSeconds);
+    expect(p.reloadRemain).toBe(TUNING.upgradeReloadSeconds * TUNING.freezeFireIntervalScale);
     expect(z.hp).toBe(0); // 2 - (1+1)
     expect(z.frozenUntil).toBeGreaterThan(b.time);
   });
@@ -175,6 +175,33 @@ describe("Battle: 单株武器升级", () => {
     const z = zA(0, { boss: true });
     b.fire(p, z);
     expect(z.frozenUntil - b.time).toBeCloseTo(TUNING.freezeStunSeconds * TUNING.bossStunScale, 5);
+  });
+
+  it("凝固弹冷却:发射间隔=装填×2(基础 1.5→3.0s),装弹恢复后仍不可再发", () => {
+    const b = newBattle();
+    const p = plantedA(b);
+    b.upgradePlant(p, "freeze");
+    const z = zA();
+    b.zombies.push(z);
+    b.lastAct = 9; // 防空场误判胜利提前退出
+    b.fire(p, z);
+    expect(p.reloadRemain).toBe(TUNING.reloadSeconds * TUNING.freezeFireIntervalScale);
+
+    // 普通装弹时间已过(1.5s),但发射间隔未满(需 3.0s)→ 仍不可再发
+    b.tick(TUNING.reloadSeconds);
+    expect(p.reloadRemain).toBeCloseTo(TUNING.reloadSeconds, 5); // 3.0 - 1.5 = 1.5
+    const z2 = zA();
+    b.zombies.push(z2);
+    b.fire(p, z);
+    expect(z2.hp).toBe(2); // 未命中:间隔未满,拒绝开火
+
+    // 补齐余下间隔后即可再发
+    b.tick(TUNING.reloadSeconds);
+    b.zombies.push(zA());
+    const last = b.zombies[b.zombies.length - 1];
+    b.fire(p, last);
+    expect(last.hp).toBeLessThan(last.maxHp); // 命中
+    expect(last.frozenUntil).toBeGreaterThan(b.time); // 冻结照常
   });
 
   it("自动发射:装填完自动打同 lane 匹配非教学僵尸", () => {

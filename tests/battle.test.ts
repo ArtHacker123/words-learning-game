@@ -89,7 +89,7 @@ describe("终局 boss(Act5): 跨 lane 接力", () => {
     expect(z.ultimate).toBe(true);
     expect(z.phaseIdx).toBe(0);
     expect(z.wordId).toBe("a");
-    expect(z.maxHp).toBe(TUNING.bossHp * TUNING.ultimateBossHpScale);
+    expect(z.maxHp).toBe(TUNING.bossHp * TUNING.ultimateBossHpScale * TUNING.act5HpMultiplier);
     expect(z.hp).toBe(z.maxHp);
     expect(z.speed).toBe(TUNING.ultimateBossSpeed);
     expect(z.cycle).toHaveLength(3);
@@ -117,17 +117,17 @@ describe("终局 boss(Act5): 跨 lane 接力", () => {
     b.sun = 300;
     const z = makeZombie(spec(["a", "b", "c"], ["forward", "reverse", "forward"]), 1, undefined, 500);
     b.zombies.push(z);
-    const seg = z.maxHp / 3; // 27/3=9(整数),避免余量干扰断言
+    const seg = z.maxHp / 3; // 54/3=18(整数),避免余量干扰断言
     const plant = b.placePlant("a", 1)!; // forward a → 期望 label=苹果(默认中文),匹配
     for (let i = 0; i < seg; i++) {
       plant.reloadRemain = 0;
       expect(b.fire(plant, z).hit).toBe(true);
     }
-    // 段①空:切到 b(reverse),hp 复位到第二段满值 18
+    // 段①空:切到 b(reverse),hp 复位到第二段满值 36
     expect(z.phaseIdx).toBe(1);
     expect(z.wordId).toBe("b");
     expect(z.direction).toBe("reverse");
-    expect(z.hp).toBe(18);
+    expect(z.hp).toBe(36);
     const plantB = b.placePlant("b", 1, "banana")!; // reverse b → 期望 label=外语 banana
     for (let i = 0; i < seg; i++) {
       plantB.reloadRemain = 0;
@@ -136,7 +136,7 @@ describe("终局 boss(Act5): 跨 lane 接力", () => {
     expect(z.phaseIdx).toBe(2);
     expect(z.wordId).toBe("c");
     expect(z.direction).toBe("forward");
-    expect(z.hp).toBe(9);
+    expect(z.hp).toBe(18);
     const plantC = b.placePlant("c", 1)!; // forward c → 默认中文
     for (let i = 0; i < seg; i++) {
       plantC.reloadRemain = 0;

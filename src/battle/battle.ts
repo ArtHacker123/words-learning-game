@@ -417,9 +417,10 @@ export class Battle {
     return plant;
   }
 
-  /** 该株装弹所需秒数(急速装填升级后 1.0s,否则 1.5s)。 */
+  /** 该株开火所需间隔(急速装填 1.0s 否则 1.5s;凝固弹株射速减半 = 装填 ×2)。 */
   reloadTime(plant: Plant): number {
-    return plant.reloadBoost ? TUNING.upgradeReloadSeconds : TUNING.reloadSeconds;
+    const base = plant.reloadBoost ? TUNING.upgradeReloadSeconds : TUNING.reloadSeconds;
+    return plant.freezeStun ? base * TUNING.freezeFireIntervalScale : base;
   }
 
   /** 移出已种的植物(右键),退还阳光成本。 */
@@ -663,6 +664,8 @@ export function makeZombie(
     hp = Math.max(hp, TUNING.bossHp);
     speed = Math.max(speed, TUNING.bossSpeed);
   }
+  // 第 5 幕僵尸血量翻倍(终局 boss 由 Act4 头目档推得后整体乘倍)
+  const act5Scale = (spec.act ?? 1) === 5 ? TUNING.act5HpMultiplier : 1;
   if (spec.teaching) speed = Math.min(speed, 30);
   if (spec.ultimate && spec.cycle && spec.cycle.length > 0) {
     // 终局 boss:总血 = 各词段按 Act4 头目档波动后的 HP 最大值 × N;每词段均分。
@@ -672,7 +675,7 @@ export function makeZombie(
       const b = Math.max(curve(statsByWord?.get(ph.wordId)), TUNING.bossHp);
       if (b > base) base = b;
     }
-    const total = base * TUNING.ultimateBossHpScale;
+    const total = base * TUNING.ultimateBossHpScale * act5Scale;
     hp = total; // z.hp 存剩余总量;词段推进阈值由 advanceUltimatePhase 按 maxHp/段数 计算
     speed = TUNING.ultimateBossSpeed;
     return {
@@ -702,8 +705,8 @@ export function makeZombie(
     teaching: spec.teaching,
     boss: spec.boss,
     act: spec.act ?? 1,
-    hp,
-    maxHp: hp,
+    hp: hp * act5Scale,
+    maxHp: hp * act5Scale,
     speed,
     x: spawnFromRight,
     lane,
