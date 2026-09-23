@@ -1,7 +1,7 @@
 import type { Word } from "./core/model";
 import { TUNING, ACT_PRESSURE } from "./core/tuning";
 import wordHash from "./core/hash";
-import { saveWords, saveStats, getStatsByWordId, getAllWords, getMeta, setMeta, saveSnapshot, getSnapshot, deleteSnapshot } from "./store/db";
+import { saveWords, saveStats, getStatsByWordId, getAllWords, getMeta, setMeta, saveSnapshot, getSnapshot, deleteSnapshot, resetProgress } from "./store/db";
 import { initWordStats, buildDailyChunks, commitOutcome, graduateBoss, ensureChunks } from "./scheduler/planner";
 import { eligibleForDiamond } from "./core/awards";
 import { Battle, pickAutoTarget } from "./battle/battle";
@@ -90,6 +90,20 @@ export async function initApp(): Promise<void> {
     ui.state.plans = [];
     ui.state.sessionIdx = 0;
     ui.state.today = today + 1;
+    ui.renderMainMenu();
+  });
+
+  ui.onReset(async () => {
+    await resetProgress(); // 清学习进度/快照,day→1、diamond→0,词表保留
+    const allWords = await getAllWords();
+    ui.state.words = allWords;
+    ui.state.statsByWord = new Map();
+    ui.state.plans = [];
+    ui.state.plan = null;
+    ui.state.sessionIdx = 0;
+    ui.state.today = 1;
+    ui.state.diamond = 0;
+    ui.log("已复位:回到第 1 天,词表保留,全部重新计为新词");
     ui.renderMainMenu();
   });
 

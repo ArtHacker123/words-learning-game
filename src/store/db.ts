@@ -84,3 +84,20 @@ export async function clearAll(): Promise<void> {
   await tx.objectStore(SNAPSHOT).clear();
   await tx.done;
 }
+
+/**
+ * 复位:只清学习进度与成就奖励,保留已导入词表。
+ * - 清空所有词的 stats(全部变回「新词」)
+ * - 清空当日快照(含历史快照)
+ * - meta 重置:day→1、diamond→0,删除 diamondDay(lastAwardDay)
+ */
+export async function resetProgress(): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction([STATS, SNAPSHOT, META], "readwrite");
+  await tx.objectStore(STATS).clear();
+  await tx.objectStore(SNAPSHOT).clear();
+  await tx.objectStore(META).put(1, "day");
+  await tx.objectStore(META).put(0, "diamond");
+  await tx.objectStore(META).delete("diamondDay");
+  await tx.done;
+}

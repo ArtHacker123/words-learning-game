@@ -60,6 +60,7 @@ export class UI {
     onStartBattle?: () => void;
     onNextDay?: () => void;
     onCreatePlan?: () => void;
+    onReset?: () => void;
     onToggleUpgradeMode?: () => void;
     onUpgradeBuy?: (key: string) => void;
     onUpgradeClose?: () => void;
@@ -135,6 +136,7 @@ export class UI {
         <button id="startBtn" ${empty || done ? "disabled" : ""}>${startLabel}</button>
         <button id="nextDayBtn" ${total > 0 ? "" : "disabled"}>次日</button>
         <button id="importMoreBtn">${empty ? "导入词库" : "导入更多词"}</button>
+        <button id="resetBtn" style="border-color:#c0392b;color:#e74c3c;">复位</button>
         <div id="stats"></div>
       </div>`);
     this.root.querySelector("#startBtn")!.addEventListener("click", () => {
@@ -142,6 +144,11 @@ export class UI {
       else if (!empty) this.handlers.onCreatePlan?.();
     });
     this.root.querySelector("#nextDayBtn")!.addEventListener("click", () => this.handlers.onNextDay?.());
+    this.root.querySelector("#resetBtn")!.addEventListener("click", () => {
+      if (window.confirm("确定复位?学习进度与钻石将清空,词表保留,游戏回到第 1 天。")) {
+        this.handlers.onReset?.();
+      }
+    });
     this.root.querySelector("#importMoreBtn")!.addEventListener("click", () => this.bindStartPage());
     this.setUpgradeBtn(false);
     this.closeUpgradePanel();
@@ -296,6 +303,7 @@ export class UI {
   onStartBattle(fn: () => void): void { this.handlers.onStartBattle = fn; }
   onCreatePlan(fn: () => void): void { this.handlers.onCreatePlan = fn; }
   onNextDay(fn: () => void): void { this.handlers.onNextDay = fn; }
+  onReset(fn: () => void): void { this.handlers.onReset = fn; }
   onToggleUpgradeMode(fn: () => void): void { this.handlers.onToggleUpgradeMode = fn; }
   onUpgradeBuy(fn: (key: string) => void): void { this.handlers.onUpgradeBuy = fn; }
   onUpgradeClose(fn: () => void): void { this.handlers.onUpgradeClose = fn; }
