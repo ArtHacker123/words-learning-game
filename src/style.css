@@ -1,0 +1,93 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { color: #e8f0e8; background: #101610; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+#app { display: flex; flex-direction: column; height: 100vh; }
+.hud { display: flex; background: #1c2a1c; border-bottom: 1px solid #3a4a3a; gap: 16px; padding: 10px 16px; font-size: 14px; font-weight: 600; }
+.hud-diamond { color: #74d7ff; }
+#base.siege { color: #ff6a5a; animation: base-siege-pulse 0.9s ease-in-out infinite; text-shadow: 0 0 8px rgba(255, 60, 40, 0.7); }
+@keyframes base-siege-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+#screen { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 12px; }
+.battle { display: flex; flex-direction: column; gap: 10px; position: fixed; inset: 53px 12px 12px; overflow: hidden; }
+.panel { display: flex; flex-direction: column; gap: 12px; max-width: 560px; margin: auto; padding: 24px; background: #16221a; border: 1px solid #334a33; border-radius: 10px; }
+.panel h2 { color: #d8f0a0; }
+textarea { color: #d5e5d5; resize: vertical; background: #0e160e; border: 1px solid #335033; border-radius: 6px; padding: 10px; font-size: 14px; }
+button { color: #fff; cursor: pointer; background: #3a6a3a; border: none; border-radius: 6px; padding: 10px 16px; font-size: 14px; }
+button:hover { background: #4a8a4a; }
+button:disabled { opacity: 0.4; cursor: default; }
+#field { background: #1e2a1e; border: 1px solid #3a4a3a; border-radius: 8px; width: 100%; flex: auto; min-height: 0; }
+#tray { display: flex; align-items: flex-start; gap: 10px; padding: 8px; background: #1c2a1c; border-radius: 8px; min-height: 56px; flex: none; overflow-y: auto; }
+#tray .tray-group { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 auto; min-width: 0; }
+#tray .tray-group + .tray-group { border-left: 1px solid #3a4a3a; padding-left: 10px; }
+#tray .tray-group-title { flex-basis: 100%; color: #9ab09a; font-size: 12px; font-weight: 600; }
+#tray .card { background: #d8ecd8; color: #14251a; font-weight: 700; min-width: 64px; border-radius: 6px; }
+#tray-loading { color: #9ab09a; }
+
+.result {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(10, 18, 12, 0.96);
+  border: 1px solid #6a8a5a;
+  border-radius: 10px;
+  padding: 28px 40px;
+  font-size: 22px;
+  text-align: center;
+  z-index: 60;
+  max-width: 86vw;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.result h3 { margin: 0 0 8px; }
+.result h4 { margin: 14px 0 4px; font-size: 17px; color: #cfdfcf; }
+.result button { margin-top: 20px; }
+.result .muted { color: #8a9a8a; font-size: 15px; }
+
+/* 右侧复盘窗:与居中结果弹窗分离,不遮挡基地沦陷提示;只读信息 */
+.recap {
+  position: fixed;
+  top: 70px;
+  right: 22px;
+  width: 340px;
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+  z-index: 50;
+  background: rgba(16, 22, 16, 0.94);
+  border: 1px solid #3a5a3a;
+  border-radius: 10px;
+  padding: 16px 18px;
+  font-size: 14px;
+  text-align: left;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+}
+.recap h3 { color: #d8f0a0; margin: 0 0 6px; font-size: 17px; }
+.recap h4 { margin: 12px 0 4px; font-size: 14px; color: #cfdfcf; }
+.recap .chips { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-start; }
+.recap .chip { background: #2a3a2a; border: 1px solid #4a5a4a; border-radius: 12px; padding: 2px 9px; font-size: 13px; }
+.recap .muted { color: #8a9a8a; font-size: 14px; }
+
+#importMsg { color: #9ac68a; font-size: 12px; }
+#stats { border-top: 1px solid #345034; margin-top: 4px; padding-top: 10px; }
+#stats ul { color: #cfe0cf; margin-left: 18px; }
+
+#upgradeBtn { background: #6a4a9a; font-weight: 700; }
+#upgradeBtn:hover { background: #8a6abe; }
+
+#upgradePanel {
+  position: fixed;
+  right: 22px;
+  bottom: 130px;
+  width: 380px;
+  z-index: 40;
+  background: rgba(16, 22, 16, 0.94);
+  border: 1px solid #6a4a9a;
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 13px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+}
+#upgradePanel h3 { color: #c9a7ff; margin: 0 0 10px; font-size: 15px; }
+#upgradePanel .upgrade-row { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+#upgradePanel .upgrade-name { min-width: 96px; font-weight: 700; flex: none; padding-top: 2px; }
+#upgradePanel .upgrade-desc { flex: 1; color: #9ab09a; font-size: 12px; line-height: 1.4; word-break: break-word; }
+#upgradePanel .upgrade-buy { margin: 0; padding: 4px 8px; font-size: 12px; white-space: nowrap; }
+#upgradeCloseBtn { margin-top: 6px; width: 100%; }
