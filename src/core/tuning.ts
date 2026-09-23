@@ -2,6 +2,7 @@
 
 export const TUNING = {
   dailyNewWords: 10,
+  sessionWordCap: 15, // 每局复习词上限:当日候选分块,一局=一块,多局覆盖全部待复习词
   intervalLadder: [1, 2, 4, 7, 15, 30], // 天
   laneCount: 5, // 恒定 5 车道
   baseHp: 2, // 最弱僵尸 2 血

@@ -1,8 +1,8 @@
-import type { Word, DailyPlan } from "./core/model";
+import type { Word } from "./core/model";
 import { TUNING, ACT_PRESSURE } from "./core/tuning";
 import wordHash from "./core/hash";
 import { saveWords, saveStats, getStatsByWordId, getAllWords, getMeta, setMeta, saveSnapshot, getSnapshot, deleteSnapshot } from "./store/db";
-import { initWordStats, buildDailyPlan, commitOutcome, graduateBoss, ensureAct5 } from "./scheduler/planner";
+import { initWordStats, buildDailyChunks, commitOutcome, graduateBoss, ensureChunks } from "./scheduler/planner";
 import { eligibleForDiamond } from "./core/awards";
 import { Battle, pickAutoTarget } from "./battle/battle";
 import { BattleRenderer } from "./render/renderer";
@@ -48,13 +48,15 @@ export async function initApp(): Promise<void> {
     if (!allWords.length) return;
     const existing = await getSnapshot(today);
     if (existing) {
-      // 当天已有快照:恢复当日计划与基线,不再重初始化、不覆盖基线(当天体验保持一致)。
-      // Act5 上线前的旧快照只有 4 幕 → ensureAct5 补出终局幕并回写,老玩家当天也能打第 5 幕。
-      const plan = ensureAct5(existing.plan);
-      await saveSnapshot({ day: today, plan, stats: existing.stats });
+      // 当天已有快照:恢复当日分块计划与基线,不再重初始化、不覆盖基线(当天体验保持一致)。
+      // 分块上线前的旧快照只有单 plan(可能只有 4 幕)→ ensureChunks 统一迁移成分块结构并补终局幕。
+      const snap = ensureChunks(existing);
+      await saveSnapshot(snap);
       ui.state.words = allWords;
       ui.state.statsByWord = await getStatsByWordId();
-      ui.state.plan = plan;
+      ui.state.plans = snap.plans;
+      ui.state.sessionIdx = snap.plans.length > 0 ? snap.played : 0;
+      ui.state.plan = snap.plans[snap.played] ?? null;
       ui.state.today = today;
       ui.renderMainMenu();
       return;
@@ -66,13 +68,16 @@ export async function initApp(): Promise<void> {
       const s = initWordStats(w.id, today, 0);
       stats.set(w.id, s);
     }
-    const plan = buildDailyPlan(allWords, stats, today);
+    // 分块计划:一局=一块(≤sessionWordCap 词),按序推进覆盖当日全部待复习词
+    const plans = buildDailyChunks(allWords, stats, today, TUNING.sessionWordCap);
     await saveStats([...stats.values()]);
     await setMeta("day", today);
-    await saveSnapshot({ day: today, plan, stats: [...stats.values()] });
+    await saveSnapshot({ day: today, plans, played: 0, stats: [...stats.values()] });
     ui.state.words = allWords;
     ui.state.statsByWord = stats;
-    ui.state.plan = plan;
+    ui.state.plans = plans;
+    ui.state.sessionIdx = 0;
+    ui.state.plan = plans[0] ?? null;
     ui.state.today = today;
     ui.renderMainMenu();
   });
@@ -82,6 +87,8 @@ export async function initApp(): Promise<void> {
     await setMeta("day", today + 1);
     await deleteSnapshot(today); // 当日快照次日即失效,清理待重建档
     ui.state.plan = null;
+    ui.state.plans = [];
+    ui.state.sessionIdx = 0;
     ui.state.today = today + 1;
     ui.renderMainMenu();
   });
@@ -94,7 +101,7 @@ export async function initApp(): Promise<void> {
       document.createElement("div"),
       document.createElement("button"),
     );
-    await runSession(ui, plan);
+    await runSession(ui, plan.day, ui.state.sessionIdx, 0);
   });
 
   // 词库非空 → 跳过导入,直接进主菜单
@@ -102,6 +109,15 @@ export async function initApp(): Promise<void> {
   ui.state.today = today;
   const diamond = (await getMeta("diamond")) ?? 0;
   ui.state.diamond = diamond;
+  // 同一天刷新/回访:恢复当日分块计划与推进进度(played),菜单按进度展示
+  const snap = await getSnapshot(today);
+  if (snap) {
+    const restored = ensureChunks(snap);
+    if (restored !== snap) await saveSnapshot(restored); // 旧单 plan 档落库为分块结构,runSession 才拿得到 plans[]
+    ui.state.plans = restored.plans;
+    ui.state.sessionIdx = restored.played;
+    ui.state.plan = restored.plans[restored.played] ?? null;
+  }
   const allWords = await getAllWords();
   if (allWords.length) {
     const stats = await getStatsByWordId();
@@ -112,12 +128,24 @@ export async function initApp(): Promise<void> {
   ui.updateHud();
 }
 
-async function runSession(ui: UI, plan: DailyPlan, startIdx = 0): Promise<void> {
+async function runSession(ui: UI, day: number, chunkIdx: number, startIdx = 0): Promise<void> {
+  const raw = await getSnapshot(day);
+  if (!raw) {
+    ui.renderMainMenu();
+    return;
+  }
+  const snap = ensureChunks(raw); // 迁移防御:旧单 plan 档转分块结构(幂等),并落库保持 DB 一致
+  if (snap !== raw) await saveSnapshot(snap);
+  if (!snap.plans[chunkIdx]) {
+    ui.renderMainMenu();
+    return;
+  }
+  const daySnap = snap; // 闭包(结算/重开)里保持非空类型
+  const plan = snap.plans[chunkIdx];
   const allWords = await getAllWords();
   const words = new Map(allWords.map((w) => [w.id, w]));
   // 生活账本 vs 当日基线:战斗难度用快照基线(当天各局一致),结算只写生活账本(一天一记)。
   const liveStats = new Map(await getStatsByWordId());
-  const snap = await getSnapshot(plan.day);
   const battleStats = snap ? new Map(snap.stats.map((s) => [s.wordId, s])) : liveStats;
 
   const field = document.querySelector<HTMLCanvasElement>("#field")!;
@@ -301,17 +329,41 @@ async function runSession(ui: UI, plan: DailyPlan, startIdx = 0): Promise<void> 
       { title: "💪 没通过,继续加油", words: fail },
     ]);
     if (won) {
-      ui.renderResult(`<b>今日胜利!</b>${diamondNote}`, "确认,返回主菜单", () => {
+      // 分块推进:本块胜利即 played+1 落库;还有剩余块 → 直接进下一块,否则今日完成
+      const nextIdx = chunkIdx + 1;
+      daySnap.played = nextIdx;
+      await saveSnapshot(daySnap);
+      ui.state.sessionIdx = nextIdx;
+      if (nextIdx < daySnap.plans.length) {
+        const next = daySnap.plans[nextIdx];
+        ui.state.plan = next;
+        ui.renderResult(
+          `<b>第 ${nextIdx}/${daySnap.plans.length} 局 今日胜利!</b>${diamondNote}`,
+          `下一局(第 ${nextIdx + 1}/${daySnap.plans.length} 局)`,
+          () => {
+            ui.clearOverlays();
+            ui.renderBattle(
+              document.createElement("canvas"),
+              document.createElement("div"),
+              document.createElement("button"),
+            );
+            void runSession(ui, day, nextIdx, 0);
+          },
+        );
+      } else {
         ui.state.plan = null;
-        ui.renderMainMenu();
-      });
+        ui.renderResult(`<b>今日全部完成!</b>${diamondNote}`, "确认,返回主菜单", () => {
+          ui.state.plan = null;
+          ui.renderMainMenu();
+        });
+      }
     } else {
       const failNo = battle.currentAct;
       const failIdx = activeActs.indexOf(failNo);
       ui.renderResult("<b>基地沦陷,本幕重来。</b>", "重新开始", () => {
         restartAct(failIdx);
       });
-      ui.state.plan = null; // 主菜单不再挂旧计划;重开由 runSession 的 plan 快照驱动
+      ui.state.plan = daySnap.plans[chunkIdx]; // 主菜单可回看当前块;重开由 runSession 快照驱动
     }
     ui.state.baseHp = battle.baseHp;
     ui.state.sun = battle.sun;
@@ -319,7 +371,7 @@ async function runSession(ui: UI, plan: DailyPlan, startIdx = 0): Promise<void> 
     ui.updateHud();
   }
 
-  /** 原地重开失败的一幕:停掉旧渲染循环,清浮层,从失败幕重建战场(保留同一份日计划)。 */
+  /** 原地重开失败的一幕:停掉旧渲染循环,清浮层,从失败幕重建战场(保留当前块的同一份计划)。 */
   function restartAct(failIdx: number): void {
     renderer.stop();
     ui.clearOverlays();
@@ -328,7 +380,7 @@ async function runSession(ui: UI, plan: DailyPlan, startIdx = 0): Promise<void> 
       document.createElement("div"),
       document.createElement("button"),
     );
-    void runSession(ui, plan, failIdx);
+    void runSession(ui, plan.day, chunkIdx, failIdx);
   }
 }
 

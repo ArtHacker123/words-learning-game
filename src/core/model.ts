@@ -57,7 +57,10 @@ export interface DailyPlan {
 /** 当日快照:首局建档时固化。当天所有局都用同一份计划与基线难度,保证体验一致。 */
 export interface DaySnapshot {
   day: number;
-  plan: DailyPlan;
+  /** 当日分块计划:一局=一块(每块 ≤ sessionWordCap 词),顺序即推进顺序;跨块互不重叠。 */
+  plans: DailyPlan[];
+  /** 已胜利完结的块数(推进指针):失败/未打完不计入;只有块胜利才 +1。 */
+  played: number;
   stats: WordStats[]; // 当日基线(敌人强度来源,不含当日已提交的记录)
 }
 

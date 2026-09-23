@@ -7,6 +7,7 @@ import type {
   DailyPlan,
   ZombieSpec,
   ActPlan,
+  DaySnapshot,
 } from "../core/model";
 import { appendEncounter, latestEncounter } from "../core/stats";
 
@@ -97,51 +98,33 @@ export function isDue(stats: WordStats, today: number): boolean {
 }
 
 /**
- * 每日计划生成
- * - 新词:取词表最早未学过的最多 N 个
- * - 到期复习:按到期长短分派 Act2(短)/Act3(长)
- * - urgent 错词(最近一次 encounter 失败)→ Act3
- * - Boss:threatIndex 最高 1~3 词,且必须已有 encounterHistory
- * - 恒产出 Act1..4 且每幕尽量非空:空幕按"更易优先"从其余幕借词补齐;
- *   全部都不是到期/新词时,兜底取"记忆最弱"的已学词填空(跨幕可重复,幕内不重复)。
+ * 当日候选词池(有序、去重):新词 → 短到期 → 长到期 → 错词(urgent)→ Boss 候选。
+ * 顺序即分块顺序:新词恒落第 1 块(教学局),其余按难度顺延。
  */
-export function buildDailyPlan(
+function dailyPool(
   words: Word[],
   statsByWord: Map<string, WordStats>,
   today: number,
-): DailyPlan {
+): string[] {
   const idOf = (w: Word) => w.id;
-
   const newIds = words
     .filter((w) => !hasEncounter(statsByWord.get(w.id)))
     .slice(0, TUNING.dailyNewWords)
     .map(idOf);
-
   const allDue = words
     .filter((w) => {
       const s = statsByWord.get(w.id);
       return s && hasEncounter(s) && isDue(s, today) && !newIds.includes(w.id);
     })
     .map(idOf);
-
   const urgentIds = words
     .filter((w) => {
       const s = statsByWord.get(w.id);
       const last = latestEncounter(s);
-      return !!last && !last.success;
+      return !!last && !last.success && !newIds.includes(w.id);
     })
-    .map(idOf)
-    .filter((id) => !newIds.includes(id));
-
-  // 分派:短间隔就诊Act2,长间隔就诊Act3;urgent 强制 Act3
+    .map(idOf);
   const rungOf = (id: string) => statsByWord.get(id)?.intervalRung ?? 0;
-  const act2Ids = allDue.filter((id) => rungOf(id) <= 1 && !urgentIds.includes(id));
-  const act3Ids = [
-    ...allDue.filter((id) => rungOf(id) > 1 || urgentIds.includes(id)),
-    ...urgentIds,
-  ].filter((id, i, arr) => arr.indexOf(id) === i);
-
-  // Boss 提名
   const bossIds = words
     .filter((w) => {
       const s = statsByWord.get(w.id);
@@ -150,6 +133,55 @@ export function buildDailyPlan(
     .sort((a, b) => threat(statsByWord, b.id) - threat(statsByWord, a.id))
     .slice(0, 3)
     .map(idOf);
+  const ordered = [
+    ...newIds,
+    ...allDue.filter((id) => rungOf(id) <= 1),
+    ...allDue.filter((id) => rungOf(id) > 1),
+    ...urgentIds,
+    ...bossIds,
+  ];
+  return ordered.filter((id, i, arr) => arr.indexOf(id) === i);
+}
+
+/**
+ * 由显式候选词 id 清单构建一份完整 5 幕计划(分块与整日共用同一套幕逻辑):
+ * 幕内角色按记忆状态在该清单内重定(教学/到期/错词/Boss),借词不出块、兜底可跨词表。
+ */
+export function buildPlanForIds(
+  ids: string[],
+  words: Word[],
+  statsByWord: Map<string, WordStats>,
+  today: number,
+): DailyPlan {
+  const newIds = ids.filter((id) => !hasEncounter(statsByWord.get(id)));
+  const allDue = ids
+    .filter((id) => {
+      const s = statsByWord.get(id);
+      return s && hasEncounter(s) && isDue(s, today) && !newIds.includes(id);
+    })
+    .map((id) => id)
+    .filter((id) => !newIds.includes(id));
+  const urgentIds = ids
+    .filter((id) => {
+      const s = statsByWord.get(id);
+      const last = latestEncounter(s);
+      return !!last && !last.success && !newIds.includes(id);
+    })
+    .map((id) => id)
+    .filter((id) => !newIds.includes(id));
+  const rungOf = (id: string) => statsByWord.get(id)?.intervalRung ?? 0;
+  const act2Ids = allDue.filter((id) => rungOf(id) <= 1 && !urgentIds.includes(id));
+  const act3Ids = [
+    ...allDue.filter((id) => rungOf(id) > 1 || urgentIds.includes(id)),
+    ...urgentIds,
+  ].filter((id, i, arr) => arr.indexOf(id) === i);
+  const bossIds = ids
+    .filter((id) => {
+      const s = statsByWord.get(id);
+      return s && s.threatIndex > 0 && hasEncounter(s);
+    })
+    .sort((a, b) => threat(statsByWord, b) - threat(statsByWord, a))
+    .slice(0, 3);
 
   const acts: ActPlan[] = [
     { act: 1, zombies: newIds.map(specZ("forward", true, false, 1)) },
@@ -192,6 +224,45 @@ export function buildDailyPlan(
   };
 }
 
+/** 单日一整份计划(不切块;等价于 buildDailyChunks 在池不超上限时的单块结果,保持旧语义)。 */
+export function buildDailyPlan(
+  words: Word[],
+  statsByWord: Map<string, WordStats>,
+  today: number,
+): DailyPlan {
+  return buildPlanForIds(dailyPool(words, statsByWord, today), words, statsByWord, today);
+}
+
+/**
+ * 每日候选按 sessionWordCap 分块:一局=一块,多局覆盖当日全部待复习词;
+ * 块内恒 5 幕、跨块词不重叠。候选为空(全部已学且未到期)时仍产出一块兜底实心复习(与旧行为一致)。
+ */
+export function buildDailyChunks(
+  words: Word[],
+  statsByWord: Map<string, WordStats>,
+  today: number,
+  cap = TUNING.sessionWordCap,
+): DailyPlan[] {
+  if (words.length === 0) return []; // 无词表 → 无计划
+  const pool = dailyPool(words, statsByWord, today);
+  if (pool.length === 0) return [buildPlanForIds([], words, statsByWord, today)];
+  const chunks: string[][] = [];
+  for (let i = 0; i < pool.length; i += cap) chunks.push(pool.slice(i, i + cap));
+  return chunks.map((ids) => buildPlanForIds(ids, words, statsByWord, today));
+}
+
+/** 一块计划里去重后的字数(含终局接力词段)。 */
+export function countPlanWords(plan: DailyPlan): number {
+  const ids = new Set<string>();
+  for (const a of plan.acts) {
+    for (const z of a.zombies) {
+      ids.add(z.wordId);
+      for (const c of z.cycle ?? []) ids.add(c.wordId);
+    }
+  }
+  return ids.size;
+}
+
 /**
  * 快照迁移:恒 5 幕上线前生成的当日计划可能只有 4 幕。
  * 已含 Act5 或 Act4 为空时原样返回;否则从 Act4 最终词补出第 5 幕(语义与 buildDailyPlan 一致)。
@@ -219,6 +290,17 @@ export function ensureAct5(plan: DailyPlan): DailyPlan {
       },
     ],
   };
+}
+
+/**
+ * 快照迁移:分块上线前 `DaySnapshot.plan` 单计划 → 新 `plans[] + played` 结构。
+ * 旧计划顺带 ensureAct5(4 幕旧档补出终局),幂等:已是新结构原样返回。
+ */
+export function ensureChunks(snap: DaySnapshot): DaySnapshot {
+  const anySnap = snap as DaySnapshot & { plan?: DailyPlan };
+  if (Array.isArray(anySnap.plans) && anySnap.plans.length) return snap;
+  const plan = ensureAct5(anySnap.plan ?? { day: snap.day, newWords: [], acts: [], bossCandidates: [] });
+  return { day: snap.day, plans: [plan], played: 0, stats: snap.stats ?? [] };
 }
 
 /** 幕内词重复:各幕把同词的第二只以相反方向复现,第二轮不显示答案提示(教完即反向回忆)。 */

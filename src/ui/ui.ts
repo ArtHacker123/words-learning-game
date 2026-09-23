@@ -3,6 +3,8 @@ import type {
   DailyPlan,
   WordStats,
 } from "../core/model";
+import { countPlanWords } from "../scheduler/planner";
+import { TUNING } from "../core/tuning";
 
 /** 简单订阅式视图骨架:首版把 DOM 呈现与逻辑分离 */
 export interface RecapGroup {
@@ -22,7 +24,9 @@ export interface AppState {
   words: Word[];
   statsByWord: Map<string, WordStats>;
   today: number;
-  plan: DailyPlan | null;
+  plan: DailyPlan | null; // 当前(下一)块计划
+  plans: DailyPlan[]; // 当日分块计划(一局=一块)
+  sessionIdx: number; // 当前块下标(下一局),已胜利完结块不在此列
   sun: number;
   baseSiege: boolean; // 基地是否正被围攻(驱动 HUD 红闪)
   baseHp: number;
@@ -39,6 +43,8 @@ export class UI {
     statsByWord: new Map(),
     today: 1,
     plan: null,
+    plans: [],
+    sessionIdx: 0,
     sun: 0,
     baseSiege: false,
     baseHp: 100,
@@ -107,22 +113,32 @@ export class UI {
   }
 
   renderMainMenu(): void {
-    const { statsByWord, words, plan } = this.state;
+    const { statsByWord, words, plans, sessionIdx } = this.state;
     const learned = words.filter((w) => statsByWord.has(w.id)).length;
     const empty = words.length === 0;
+    const total = plans.length;
+    const done = total > 0 && sessionIdx >= total; // 全部块已胜利完结
+    const curWords = !done && sessionIdx < total ? countPlanWords(plans[sessionIdx]) : 0;
+    const startLabel = empty
+      ? "请先导入词表"
+      : total === 0
+        ? "生成今日计划"
+        : done
+          ? "今日复习完成"
+          : `开一局(第 ${sessionIdx + 1}/${total} 局 · ${curWords} 词)`;
     this.screen(`
       <div class="panel">
         <h2>词域攻防</h2>
         <p>词表 ${words.length} 词 | 已学 ${learned}</p>
-        ${empty ? `<p>词库为空,请先导入词表</p>` : ""}
-        ${plan ? `<p>今日计划:新词 ${plan.newWords.length},共 ${plan.acts.reduce((s, a) => s + a.zombies.length, 0)} 只僵尸</p>` : ""}
-        <button id="startBtn" ${empty ? "disabled" : ""}>${plan ? "开一局" : empty ? "请先导入词表" : "生成今日计划"}</button>
-        <button id="nextDayBtn" ${plan ? "" : "disabled"}>次日</button>
+        ${total === 0 ? "" : `<p>今日复习 ${total} 局 · 已完成 ${Math.min(sessionIdx, total)} 局 · 每局至多 ${TUNING.sessionWordCap} 词</p>`}
+        ${done ? `<p>今日 ${total} 局全部完成,可以歇了 💪</p>` : ""}
+        <button id="startBtn" ${empty || done ? "disabled" : ""}>${startLabel}</button>
+        <button id="nextDayBtn" ${total > 0 ? "" : "disabled"}>次日</button>
         <button id="importMoreBtn">${empty ? "导入词库" : "导入更多词"}</button>
         <div id="stats"></div>
       </div>`);
     this.root.querySelector("#startBtn")!.addEventListener("click", () => {
-      if (!empty && this.state.plan) this.handlers.onStartBattle?.();
+      if (!empty && total > 0) this.handlers.onStartBattle?.();
       else if (!empty) this.handlers.onCreatePlan?.();
     });
     this.root.querySelector("#nextDayBtn")!.addEventListener("click", () => this.handlers.onNextDay?.());

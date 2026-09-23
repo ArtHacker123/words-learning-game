@@ -8,7 +8,10 @@ import {
   graduateBoss,
   isDue,
   buildDailyPlan,
+  buildDailyChunks,
   ensureAct5,
+  ensureChunks,
+  countPlanWords,
   hashDirection,
 } from "../src/scheduler/planner";
 import { TUNING, ACT_REVERSE_RATIO } from "../src/core/tuning";
@@ -412,5 +415,92 @@ describe("planner: 当日快照单条结记 commitOutcome", () => {
     expect(d2.encounterHistory[0]).toMatchObject({ day: 1, success: false });
     expect(d2.encounterHistory[1]).toMatchObject({ day: 2, success: true });
     expect(d2.threatIndex).toBe(1); // 次日记录不受当日(次日)重复影响前,第1天威胁保留
+  });
+});
+
+describe("planner: 每日分块 buildDailyChunks(一局=一块,≤sessionWordCap 词)", () => {
+  function learnedDue(n: number, day = 0): Word[] {
+    return Array.from({ length: n }, (_, i) => ({ id: `r${i + 1}`, foreign: `r${i + 1}`, chinese: `词${i + 1}` }));
+  }
+  function mapDue(ids: string[], rung = 0) {
+    const map = new Map<string, WordStats>();
+    for (const id of ids) {
+      map.set(id, { ...mk(id, 1, [{ day: 0, act: 1, direction: "forward", retries: 0, success: true }]), intervalRung: rung });
+    }
+    return map;
+  }
+  function distinct(plan: DailyPlan): string[] {
+    const ids = new Set<string>();
+    for (const a of plan.acts) for (const z of a.zombies) ids.add(z.wordId);
+    return [...ids];
+  }
+
+  it("40 候选(5 新 + 35 到期)-> 3 块 [15,15,10];词不重不漏;新词落第 1 块", () => {
+    const newWords: Word[] = Array.from({ length: 5 }, (_, i) => ({ id: `n${i + 1}`, foreign: `n${i + 1}`, chinese: `新${i + 1}` }));
+    const due = learnedDue(35);
+    const words = [...newWords, ...due];
+    const map = mapDue(due.map((w) => w.id));
+    const plans = buildDailyChunks(words, map, 2, 15);
+    expect(plans.map((p) => p.newWords)).toEqual([["n1", "n2", "n3", "n4", "n5"], [], []]);
+    const flat: string[] = [];
+    for (const p of plans) {
+      flat.push(...distinct(p));
+      expect(p.acts.some((a) => a.act === 5)).toBe(true); // 每块恒 5 幕
+    }
+    expect(flat.length).toBe(40);
+    expect(new Set(flat).size).toBe(40); // 无重叠
+    for (const w of words.map((x) => x.id)) expect(flat).toContain(w); // 无遗漏
+    // 块 0 的教学词 = 全部新词(教学局前置);仅第 1 轮(前半)为教学
+    const first = plans[0].acts[0].zombies.slice(0, plans[0].acts[0].zombies.length / TUNING.actRepeatRounds[0]);
+    expect(first.map((z) => z.wordId).sort()).toEqual(["n1", "n2", "n3", "n4", "n5"]);
+    for (const z of first) expect(z.teaching).toBe(true);
+  });
+
+  it("候选不足上限 → 单块;countPlanWords 与块内去重词数一致", () => {
+    const due = learnedDue(8);
+    const map = mapDue(due.map((w) => w.id));
+    const plans = buildDailyChunks(due, map, 3, 15);
+    expect(plans).toHaveLength(1);
+    expect(countPlanWords(plans[0])).toBe(8);
+  });
+
+  it("全部已学且未到期(空候选)→ 仍产一块兜底实心复习,恒 5 幕", () => {
+    const learned = learnedDue(6);
+    const map = mapDue(learned.map((w) => w.id), 5); // rung 5 → 间隔 30 天,未到期
+    const plans = buildDailyChunks(learned, map, 2, 15);
+    expect(plans).toHaveLength(1);
+    expect(plans[0].acts.some((a) => a.act === 5)).toBe(true);
+    for (const a of plans[0].acts) expect(a.zombies.length).toBeGreaterThan(0);
+  });
+
+  it("空词表 → 无计划输出", () => {
+    expect(buildDailyChunks([], new Map(), 1, 15)).toEqual([]);
+  });
+});
+
+describe("planner: ensureChunks 快照迁移(单 plan → plans[]+played)", () => {
+  it("单 plan 旧快照 → plans=[plan], played=0,并补 Act5(4 幕旧档)", () => {
+    const oldPlan: DailyPlan = {
+      day: 3,
+      newWords: [],
+      acts: [
+        { act: 1, zombies: [{ wordId: "a", direction: "forward", teaching: true, boss: false, act: 1 }] },
+        { act: 2, zombies: [] },
+        { act: 3, zombies: [{ wordId: "b", direction: "forward", teaching: false, boss: false, act: 3 }] },
+        { act: 4, zombies: [{ wordId: "h", direction: "reverse", teaching: false, boss: true, act: 4 }] },
+      ],
+      bossCandidates: ["h"],
+    };
+    const snap = ensureChunks({ day: 3, plan: oldPlan, stats: [] } as never);
+    expect(snap.played).toBe(0);
+    expect(snap.plans).toHaveLength(1);
+    expect(snap.plans[0].acts).toHaveLength(5); // ensureAct5 已补齐终局幕
+    expect(snap.plans[0].acts[4].act).toBe(5);
+    expect(snap.stats).toEqual([]);
+  });
+
+  it("已是新结构 → 原样返回(幂等,不重置 played)", () => {
+    const snap = { day: 4, plans: [{ day: 4, newWords: [], acts: [], bossCandidates: [] }], played: 2, stats: [{ wordId: "x", intervalRung: 0, threatIndex: 0, introducedDay: 1, introducedBatch: 0, encounterHistory: [] }] };
+    expect(ensureChunks(snap)).toBe(snap);
   });
 });
