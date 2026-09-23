@@ -172,7 +172,15 @@ export async function initApp(): Promise<void> {
   ui.updateHud();
 }
 
-async function runSession(ui: UI, profile: ProfileId, day: number, chunkIdx: number, startIdx = 0): Promise<void> {
+async function runSession(
+  ui: UI,
+  profile: ProfileId,
+  day: number,
+  chunkIdx: number,
+  startIdx = 0,
+  startSun?: number,
+  startBaseHp?: number,
+): Promise<void> {
   const raw = await getSnapshot(profile, day);
   if (!raw) {
     ui.renderMainMenu();
@@ -210,7 +218,10 @@ async function runSession(ui: UI, profile: ProfileId, day: number, chunkIdx: num
 
   let actIdx = 0; // 当前幕在 activeActs 中的下标
   if (startIdx > 0) actIdx = startIdx; // 重开本幕:直接落在失败的那一幕
+  // 每幕开场时的阳光/基地血量快照,失败重开时据此恢复
+  const snapshotAtActStart: { sun: number; baseHp: number }[] = [];
   const startAct = (): void => {
+    snapshotAtActStart[actIdx] = { sun: battle.sun, baseHp: battle.baseHp };
     const actNo = activeActs[actIdx];
     const actPlan = plan.acts.find((a) => a.act === actNo)!;
     const p = ACT_PRESSURE[actNo - 1];
@@ -245,6 +256,9 @@ async function runSession(ui: UI, profile: ProfileId, day: number, chunkIdx: num
       onVic: () => finishSession(),
     },
   });
+  // 失败重开:恢复该幕开场时的阳光与基地血量(不传则用默认 100/100)
+  if (startSun !== undefined) battle.sun = startSun;
+  if (startBaseHp !== undefined) battle.baseHp = startBaseHp;
   // 开发态调试钩子:冒烟测试直接观测战斗内部状态
   if (import.meta.env.DEV) {
     (window as unknown as Record<string, unknown>).__battle = battle;
@@ -428,7 +442,7 @@ async function runSession(ui: UI, profile: ProfileId, day: number, chunkIdx: num
       document.createElement("div"),
       document.createElement("button"),
     );
-    void runSession(ui, profile, plan.day, chunkIdx, failIdx);
+    void runSession(ui, profile, plan.day, chunkIdx, failIdx, snapshotAtActStart[failIdx]?.sun, snapshotAtActStart[failIdx]?.baseHp);
   }
 }
 
