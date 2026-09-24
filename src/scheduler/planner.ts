@@ -154,27 +154,15 @@ export function buildPlanForIds(
   today: number,
 ): DailyPlan {
   const newIds = ids.filter((id) => !hasEncounter(statsByWord.get(id)));
-  const allDue = ids
-    .filter((id) => {
-      const s = statsByWord.get(id);
-      return s && hasEncounter(s) && isDue(s, today) && !newIds.includes(id);
-    })
-    .map((id) => id)
-    .filter((id) => !newIds.includes(id));
-  const urgentIds = ids
-    .filter((id) => {
-      const s = statsByWord.get(id);
-      const last = latestEncounter(s);
-      return !!last && !last.success && !newIds.includes(id);
-    })
-    .map((id) => id)
-    .filter((id) => !newIds.includes(id));
-  const rungOf = (id: string) => statsByWord.get(id)?.intervalRung ?? 0;
-  const act2Ids = allDue.filter((id) => rungOf(id) <= 1 && !urgentIds.includes(id));
-  const act3Ids = [
-    ...allDue.filter((id) => rungOf(id) > 1 || urgentIds.includes(id)),
-    ...urgentIds,
-  ].filter((id, i, arr) => arr.indexOf(id) === i);
+  const dueIds = ids.filter((id) => {
+    const s = statsByWord.get(id);
+    return s && hasEncounter(s) && isDue(s, today) && !newIds.includes(id);
+  });
+  const urgentIds = ids.filter((id) => {
+    const s = statsByWord.get(id);
+    const last = latestEncounter(s);
+    return !!last && !last.success && !newIds.includes(id);
+  });
   const bossIds = ids
     .filter((id) => {
       const s = statsByWord.get(id);
@@ -182,6 +170,20 @@ export function buildPlanForIds(
     })
     .sort((a, b) => threat(statsByWord, b) - threat(statsByWord, a))
     .slice(0, 3);
+
+  // 复习池 = 到期 ∪ 上次失败,剔除已入 Act4 的头目词(头目只答一次,不与 Act3 重复)。
+  // 按难度(打分)升序排齐,再对半均分:较易一半进 Act2、较难一半进 Act3 → 数量均匀 + 难度渐进。
+  const reviewIds = [...new Set([...dueIds, ...urgentIds])]
+    .filter((id) => !bossIds.includes(id))
+    .sort(
+      (a, b) =>
+        difficultyScore(statsByWord.get(a)) - difficultyScore(statsByWord.get(b)) ||
+        threat(statsByWord, a) - threat(statsByWord, b) ||
+        a.localeCompare(b),
+    );
+  const half = Math.ceil(reviewIds.length / 2);
+  const act2Ids = reviewIds.slice(0, half);
+  const act3Ids = reviewIds.slice(half);
 
   const acts: ActPlan[] = [
     { act: 1, zombies: newIds.map(specZ("forward", true, false, 1)) },
@@ -196,14 +198,29 @@ export function buildPlanForIds(
     a.zombies = repeatRounds(a.zombies, TUNING.actRepeatRounds[a.act - 1] ?? 1);
   }
 
-  // 恒 5 幕:第 5 幕「终局」= 一只跨 lane 接力 boss,体内轮换 Act4 最终上场的词(1~3)。
-  // 出场顺序随机化(计划写入快照 → 当天各局一致),每词段用其在 Act4 的方向作答。
+  // 恒 5 幕:第 5 幕「终局」= 一只跨 lane 接力 boss,体内轮换「全网 Top3 最难词」
+  // (难度打分高优先、威胁高次之、id 收尾),可与 Act4 头目词不同;无复习词时回退 Act4 词。
+  // 每词段方向沿用 Act4 的 hashDirection,答法一致。
   const act4 = acts.find((a) => a.act === 4);
   if (act4 && act4.zombies.length > 0) {
-    const cycle = act4.zombies
-      .map((z) => ({ wordId: z.wordId, direction: z.direction as Direction }))
-      .filter((p, i, arr) => arr.findIndex((q) => q.wordId === p.wordId) === i)
-      .slice(0, 3);
+    const source = [...new Set([...dueIds, ...urgentIds, ...bossIds])];
+    let cycle: { wordId: string; direction: Direction }[];
+    if (source.length > 0) {
+      cycle = source
+        .sort(
+          (a, b) =>
+            difficultyScore(statsByWord.get(b)) - difficultyScore(statsByWord.get(a)) ||
+            threat(statsByWord, b) - threat(statsByWord, a) ||
+            a.localeCompare(b),
+        )
+        .slice(0, 3)
+        .map((id) => ({ wordId: id, direction: hashDirection(id, 4) as Direction }));
+    } else {
+      cycle = act4.zombies
+        .map((z) => ({ wordId: z.wordId, direction: z.direction as Direction }))
+        .filter((p, i, arr) => arr.findIndex((q) => q.wordId === p.wordId) === i)
+        .slice(0, 3);
+    }
     // Fisher–Yates 打乱出场顺序
     for (let i = cycle.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -222,6 +239,17 @@ export function buildPlanForIds(
     acts,
     bossCandidates: bossIds,
   };
+}
+
+/**
+ * 词条难度打分(服务分幕):
+ * 0=新词(教学)、1=短间隔到期(上次成功且 rung≤1)、2=长间隔到期(rung≥2)、3=上次失败(urgent)。
+ */
+function difficultyScore(stats: WordStats | undefined): number {
+  if (!stats || stats.encounterHistory.length === 0) return 0;
+  const last = latestEncounter(stats);
+  if (last && !last.success) return 3;
+  return stats.intervalRung >= 2 ? 2 : 1;
 }
 
 /** 单日一整份计划(不切块;等价于 buildDailyChunks 在池不超上限时的单块结果,保持旧语义)。 */

@@ -117,7 +117,7 @@ describe("planner: 当日计划生成", () => {
     }
   });
 
-  it("已学 ≤1档到期词进 Act2,urgent/长间隔词进 Act3", () => {
+  it("复习池按难度打分对半均分:较易进 Act2,较难进 Act3", () => {
     const map = new Map<string, WordStats>();
     // w1-w3: 已学,day1 之后第7天到期(阶梯0 间隔1)
     for (let i = 1; i <= 3; i++) {
@@ -134,12 +134,51 @@ describe("planner: 当日计划生成", () => {
     });
 
     const plan = buildDailyPlan(words, map, 7);
-    // w1-w3 到期,rung0<=1 且非 urgent → Act2(每词 2 只)
-    expect(plan.acts.find((a) => a.act === 2)?.zombies.map((z) => z.wordId).sort()).toEqual(["w1", "w1", "w2", "w2", "w3", "w3"]);
-    // w4 urgent → Act3; w5 阶梯4 长间隔但 day7 未到期(1+15=16),不入任何复习
+    // 复习池 = [w1..w4](w5 未到期),难度排序 [w1,w2,w3](score1)+[w4](score3);
+    // 对半均分:act2=[w1,w2], act3=[w3,w4](每词 2 只)
+    expect(plan.acts.find((a) => a.act === 2)?.zombies.map((z) => z.wordId).sort()).toEqual(["w1", "w1", "w2", "w2"]);
     const act3 = plan.acts.find((a) => a.act === 3)?.zombies.map((z) => z.wordId) ?? [];
-    expect(act3).toContain("w4");
+    expect(act3).toContain("w3");
+    expect(act3).toContain("w4"); // urgent 落较难一半
     expect(act3).not.toContain("w5");
+  });
+
+  it("五幕数量更均匀:纯到期复习时 Act2/3 词数均分且相等", () => {
+    const dueWords: Word[] = Array.from({ length: 10 }, (_, i) => ({ id: `d${i + 1}`, foreign: `d${i + 1}`, chinese: `词${i + 1}` }));
+    const map = new Map<string, WordStats>();
+    for (let i = 1; i <= 10; i++) {
+      map.set(`d${i}`, mk(`d${i}`, 1, [{ day: 1, act: 1, direction: "forward", retries: 0, success: true }]));
+    }
+    const plan = buildDailyPlan(dueWords, map, 4); // day4 > day1+1 全部到期
+    const act2 = plan.acts.find((a) => a.act === 2)!;
+    const act3 = plan.acts.find((a) => a.act === 3)!;
+    expect(act2.zombies).toHaveLength(10); // 5 词 × 2 轮
+    expect(act3.zombies).toHaveLength(10);
+    expect(new Set(act2.zombies.map((z) => z.wordId)).size).toBe(5);
+    expect(new Set(act3.zombies.map((z) => z.wordId)).size).toBe(5);
+  });
+
+  it("难度渐进:Act3 中较难词(urgent)全部排较易词之后", () => {
+    const map = new Map<string, WordStats>();
+    for (let i = 1; i <= 4; i++) {
+      map.set(`e${i}`, mk(`e${i}`, 1, [{ day: 1, act: 1, direction: "forward", retries: 0, success: true }]));
+    }
+    map.set("u1", mk("u1", 0, [{ day: 1, act: 1, direction: "forward", retries: 1, success: false }]));
+    map.set("u2", mk("u2", 0, [{ day: 1, act: 1, direction: "forward", retries: 2, success: false }]));
+    const w: Word[] = [
+      ...Array.from({ length: 4 }, (_, i) => ({ id: `e${i + 1}`, foreign: `e${i + 1}`, chinese: `词${i + 1}` })),
+      { id: "u1", foreign: "u1", chinese: "U1" },
+      { id: "u2", foreign: "u2", chinese: "U2" },
+    ];
+    const plan = buildDailyPlan(w, map, 4);
+    const act2Set = new Set(plan.acts.find((a) => a.act === 2)?.zombies.map((z) => z.wordId) ?? []);
+    const act3Set = new Set(plan.acts.find((a) => a.act === 3)?.zombies.map((z) => z.wordId) ?? []);
+    // 难度升序 [e1..e4](1) [u1,u2](3) 对半:act2 全易,act3 收尾含 u1/u2
+    expect(act2Set.has("u1")).toBe(false);
+    expect(act2Set.has("u2")).toBe(false);
+    expect(act3Set.has("u1")).toBe(true);
+    expect(act3Set.has("u2")).toBe(true);
+    expect(act3Set.has("e4")).toBe(true);
   });
 
   it("Boss:取 threatIndex 最高 1~3 词,且必须有过 encounter", () => {
@@ -202,6 +241,30 @@ describe("planner: 终局 Act5(恒 5 幕接力 boss)", () => {
     expect(boss.cycle![0].wordId).toBe(boss.wordId);
     const act4Dir = new Map(act4.zombies.map((z) => [z.wordId, z.direction]));
     for (const c of boss.cycle!) expect(c.direction).toBe(act4Dir.get(c.wordId));
+  });
+
+  it("cycle 取全网 Top3 最难,可与 Act4 头目词不同", () => {
+    // q1/q2:urgent(上次失败,难度3)但不是威胁词 → 不提名头目
+    // b1:威胁高 → 提名头目,但上次成功(rung低,难度1)
+    const map = new Map<string, WordStats>();
+    map.set("q1", mk("q1", 0, [{ day: 1, act: 3, direction: "forward", retries: 1, success: false }]));
+    map.set("q2", mk("q2", 0, [{ day: 1, act: 3, direction: "forward", retries: 2, success: false }]));
+    map.set("b1", { ...mk("b1", 0, [{ day: 1, act: 4, direction: "forward", retries: 0, success: true }]), threatIndex: 5 });
+    const words: Word[] = [
+      { id: "q1", foreign: "q1", chinese: "困1" },
+      { id: "q2", foreign: "q2", chinese: "困2" },
+      { id: "b1", foreign: "b1", chinese: "头1" },
+    ];
+    const plan = buildDailyPlan(words, map, 7);
+    const act4 = plan.acts.find((a) => a.act === 4)!;
+    expect(act4.zombies.map((z) => z.wordId)).toEqual(["b1"]); // 头目只有 b1
+    const boss = plan.acts.find((a) => a.act === 5)!.zombies[0];
+    const cycWords = new Set(boss.cycle!.map((c) => c.wordId));
+    // 全网 Top3 最难 = [q1,q2](上次失败) + [b1] → 与 Act4 头目不同,更尖的错词进终局
+    expect(cycWords.has("q1")).toBe(true);
+    expect(cycWords.has("q2")).toBe(true);
+    expect(cycWords.has("b1")).toBe(true);
+    expect(boss.cycle!.length).toBe(3);
   });
 
   it("空词库 → 仅空壳 4 幕,不生成 Act5", () => {
