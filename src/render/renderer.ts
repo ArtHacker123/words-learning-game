@@ -25,6 +25,7 @@ export interface SpriteArgs {
   dying?: boolean; // 倒地淡出动画中的僵尸快照
   ultimate?: boolean; // 终局接力 boss(跨全 lane 的巨大身躯)
   actScale?: number; // 按当前 Act 逐步放大身躯(Act1 最小→Act4 更大),上限被 lane 高钳制
+  act?: number; // 所属幕 1..5,决定换装样式(1 呆萌→4 凶煞;5/缺失回退第 4 幕)
   direction: "forward" | "reverse";
 }
 
@@ -60,7 +61,7 @@ export class BattleRenderer {
   private floaters: { x: number; y: number; text: string; color: string; t0: number }[] = [];
   private baseHitFlash = 0; // 基地被咬一口后的红闪剩余秒数
   // 僵尸死亡倒地特效(renderer 层快照,不改动战斗逻辑)
-  private zSnap = new Map<string, { x: number; lane: number; boss: boolean; buffed: boolean; wordId: string; direction: "forward" | "reverse"; ultimate: boolean; actScale: number }>();
+  private zSnap = new Map<string, { x: number; lane: number; boss: boolean; buffed: boolean; wordId: string; direction: "forward" | "reverse"; ultimate: boolean; act: number; actScale: number }>();
   private dying: (typeof this.zSnap extends Map<string, infer S> ? S & { id: string; t0: number } : never)[] = [];
 
   setSelected(p: Plant | null): void {
@@ -229,6 +230,7 @@ export class BattleRenderer {
         wordId: z.wordId,
         direction: z.direction,
         ultimate: !!z.ultimate,
+        act: z.act ?? 1,
         actScale: z.ultimate ? 1 : this.actSizeScale(),
       });
     }
@@ -266,6 +268,7 @@ export class BattleRenderer {
         ultimate: dy.ultimate,
         direction: dy.direction,
         dying: true,
+        act: dy.act ?? 1,
         actScale: dy.actScale ?? 1,
       });
       ctx.restore();
@@ -380,7 +383,7 @@ export class BattleRenderer {
     const strength = z.boss ? 2 : z.buffed ? 1 : 0;
     const word = this.words.get(z.wordId);
     const text = z.direction === "forward" ? word?.foreign ?? "?" : word?.chinese ?? "?";
-    return { kind: "zombie", text, strength, teaching: z.teaching, boss: z.boss, buffed: z.buffed, ultimate: z.ultimate, direction: z.direction, actScale: z.ultimate ? 1 : this.actSizeScale() };
+    return { kind: "zombie", text, strength, teaching: z.teaching, boss: z.boss, buffed: z.buffed, ultimate: z.ultimate, direction: z.direction, act: z.act ?? 1, actScale: z.ultimate ? 1 : this.actSizeScale() };
   }
 
   private drawZombie(ctx: CanvasRenderingContext2D, z: Zombie, flashing = false): void {
@@ -557,6 +560,18 @@ const Z_ANIM = {
   sway: 0.09, // 身体前倾幅度(弧度)
 };
 
+// 幕级换装:普通僵尸(含头目)按所属幕取肤色/五官/装饰,Act1 呆萌 → Act4 凶煞逐级吓人。
+// 终极 boss 走独立分支(暗紫金冠),不在此表内。teeth: 上獠牙对数;emoFang: 眼型代号
+const ACT_LOOK: Record<
+  number,
+  { light: string; dark: string; eye: "droopy" | "thin" | "angry" | "glow"; teeth: 1 | 2 | 3 | 4; spike: number; scar: boolean; bandage: boolean }
+> = {
+  1: { light: "#8ada6f", dark: "#2f7a2f", eye: "droopy", teeth: 1, spike: 0, scar: false, bandage: false }, // 呆萌绿,耷拉眼
+  2: { light: "#8cb860", dark: "#3d5a2b", eye: "thin", teeth: 2, spike: 0, scar: false, bandage: true }, // 掉色灰绿,细窄眼 + 额头破布条
+  3: { light: "#6ba043", dark: "#2c4a18", eye: "angry", teeth: 3, spike: 1, scar: true, bandage: false }, // 怒目橄榄,上挑怒视 + 肩刺 + 胸×疤
+  4: { light: "#4a8a3a", dark: "#17310e", eye: "glow", teeth: 4, spike: 2, scar: true, bandage: false }, // 凶煞深紫绿,发光红瞳 + 双尖刺 + 裂痕
+};
+
 /** 身躯半径:普通僵尸 18 起步按 Act 放大、受 lane 高钳制不越界;
     终局 boss 不做任何改动(保持 laneH*1.4 跨 lane 巨体)。与 placeholderDrawer 内计算保持一致。 */
 function zombieRadius(actScale: number, strength: number, boss: boolean, ultimate: boolean, laneH: number): number {
@@ -587,14 +602,14 @@ export const placeholderDrawer: SpriteDrawer = (d, x, y, args) => {
     const bodyY = drawY + 2;
     const legY = bodyY + r * 1.02;
 
-    // 皮肤配色:普通绿 / boss 深棕 / 终局暗紫金 / 发怒红
+    // 皮肤配色:中局 boss/普通僵尸按所属幕 ACT_LOOK 换装(含头目);
+    // 发怒红为瞬时状态覆盖;终局暗紫金走独立分支不变。
+    const look = ACT_LOOK[Math.max(1, Math.min(4, args.act ?? 4))];
     const skin = args.ultimate
       ? ["#8c51c2", "#3c1c66"]
-      : args.boss
-        ? ["#8a5a3a", "#4a2a22"]
-        : args.buffed
-          ? ["#ff8a5a", "#c22a1a"]
-          : ["#8ada6f", "#2f7a2f"];
+      : args.buffed
+        ? ["#ff8a5a", "#c22a1a"]
+        : [look.light, look.dark];
     const skinLight = skin[0];
     const skinDark = skin[1];
 
@@ -673,30 +688,115 @@ export const placeholderDrawer: SpriteDrawer = (d, x, y, args) => {
     ctx.strokeStyle = "#111";
     ctx.lineWidth = 2;
     ctx.stroke();
-    // 眼睛:眼白 + 黑瞳(发怒红瞳变大)
+    // 眼睛:按幕换眼型(终局保留黑瞳大眼不变)
     if (args.buffed) ctx.shadowBlur = 0;
     const eyeY = -r * 0.55;
     const eyeOff = r * 0.3;
+    const eyeStyle = args.ultimate ? "plain" : look.eye;
     for (const s of [1, -1] as const) {
+      const ex = s * eyeOff;
+      let rx = r * 0.24, ry = r * 0.24;
+      let pc = args.buffed ? "#c00" : "#1a1a1a";
+      let px = ex - r * 0.06, py = eyeY, pr = r * 0.11;
+      if (eyeStyle === "droopy") {
+        // Act1 呆萌:瞳孔沉底,睡眼惺忪
+        pr = r * 0.09;
+        py = eyeY + r * 0.07;
+      } else if (eyeStyle === "thin") {
+        // Act2 掉色:细窄眯缝
+        rx = r * 0.27;
+        ry = r * 0.12;
+        pr = r * 0.07;
+        py = eyeY;
+      } else if (eyeStyle === "angry") {
+        // Act3 怒目:外眼角上挑 + 棕红瞳
+        rx = r * 0.24;
+        ry = r * 0.18;
+        pr = r * 0.1;
+        pc = args.buffed ? "#c00" : "#7a2a1a";
+      } else if (eyeStyle === "glow") {
+        // Act4 凶煞:发光红瞳,配红光晕
+        rx = r * 0.27;
+        ry = r * 0.27;
+        pr = r * 0.14;
+        pc = "#ff4020";
+        ctx.save();
+        ctx.shadowColor = "rgba(255,60,30,0.85)";
+        ctx.shadowBlur = 9;
+      }
+      if (eyeStyle === "angry") {
+        ctx.save();
+        ctx.translate(ex, eyeY);
+        ctx.rotate(-s * 0.2);
+        ctx.fillStyle = "#f4f4f4";
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = pc;
+        ctx.beginPath();
+        ctx.arc(-r * 0.06, 0, pr, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        continue;
+      }
       ctx.fillStyle = "#f4f4f4";
       ctx.beginPath();
-      ctx.arc(s * eyeOff, eyeY, r * 0.24, 0, Math.PI * 2);
+      ctx.ellipse(ex, eyeY, rx, ry, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = args.buffed ? "#c00" : "#1a1a1a";
+      ctx.fillStyle = pc;
       ctx.beginPath();
-      ctx.arc(s * eyeOff - r * 0.06, eyeY, args.buffed ? r * 0.16 : r * 0.11, 0, Math.PI * 2);
+      ctx.arc(px, py, pr, 0, Math.PI * 2);
       ctx.fill();
+      if (eyeStyle === "glow") ctx.restore();
     }
-    // 獠牙:底部两列白色小三角
+    // 獠牙:按幕由少→多、由小→大参差排开(Act4 最狰狞);终局保留原有两列小牙
     ctx.fillStyle = "#f8f6e8";
+    const teethCount = args.ultimate ? 1 : look.teeth;
     for (const s of [1, -1] as const) {
-      const tx = s * r * 0.22;
-      ctx.beginPath();
-      ctx.moveTo(tx - 4 * scale, r * 0.85);
-      ctx.lineTo(tx + 4 * scale, r * 0.85);
-      ctx.lineTo(tx, r * 1.02);
-      ctx.closePath();
-      ctx.fill();
+      for (let i = 0; i < teethCount; i++) {
+        const tx = s * (r * 0.12 + i * r * 0.16);
+        const hgt = r * (0.16 + (i % 2) * 0.07);
+        const wdt = (4 + i * 0.6) * scale;
+        ctx.beginPath();
+        ctx.moveTo(tx - wdt, r * 0.85);
+        ctx.lineTo(tx + wdt, r * 0.85);
+        ctx.lineTo(tx + (i % 2) * wdt * 0.5, r * 0.85 + hgt);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    // 幕级装饰(身体 transform 内,随摇摆):绷带 / ×疤 / 肩刺(终局 boss 另有皇冠,不叠加)
+    if (!args.ultimate) {
+      if (look.bandage) {
+        ctx.fillStyle = "rgba(216,210,190,0.92)";
+        ctx.fillRect(-r * 0.72, -r * 1.0, r * 1.44, r * 0.15);
+        ctx.fillStyle = "#8a8474";
+        ctx.fillRect(-r * 0.72, -r * 0.87, r * 1.44, r * 0.04);
+      }
+      if (look.scar) {
+        ctx.strokeStyle = "#1c2a0e";
+        ctx.lineWidth = 2;
+        const cx = r * 0.28;
+        const cy = r * 0.3;
+        ctx.beginPath();
+        ctx.moveTo(cx - r * 0.14, cy - r * 0.14);
+        ctx.lineTo(cx + r * 0.14, cy + r * 0.14);
+        ctx.moveTo(cx + r * 0.14, cy - r * 0.14);
+        ctx.lineTo(cx - r * 0.14, cy + r * 0.14);
+        ctx.stroke();
+      }
+      if (look.spike > 0) {
+        const sc = look.spike === 2 ? r * 0.3 : r * 0.22;
+        ctx.fillStyle = "#cdd6c6";
+        for (const s of [-1, 1] as const) {
+          ctx.beginPath();
+          ctx.moveTo(s * r * 0.62, -r * 0.95);
+          ctx.lineTo(s * r * 0.62 + s * sc * 0.7, -r * 0.95 - sc);
+          ctx.lineTo(s * r * 0.62 + s * sc, -r * 0.95);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
     }
     ctx.restore();
     if (args.buffed) ctx.restore();
