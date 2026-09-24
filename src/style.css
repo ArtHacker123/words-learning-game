@@ -100,11 +100,12 @@ button:disabled { opacity: 0.4; cursor: default; }
 .result button { margin-top: 20px; }
 .result .muted { color: #8a9a8a; font-size: 15px; }
 
-/* 右侧复盘窗:与居中结果弹窗分离,不遮挡基地沦陷提示;只读信息 */
+/* 复盘窗:水平居中,紧贴顶部 10% 处 */
 .recap {
   position: fixed;
-  top: 70px;
-  right: 22px;
+  top: 10vh;
+  left: 50%;
+  transform: translateX(-50%);
   width: 340px;
   max-height: calc(100vh - 160px);
   overflow-y: auto;
@@ -136,8 +137,9 @@ button:disabled { opacity: 0.4; cursor: default; }
 
 #upgradePanel {
   position: fixed;
-  right: 22px;
-  bottom: 130px;
+  top: 10vh;
+  left: 50%;
+  transform: translateX(-50%);
   width: 380px;
   z-index: 40;
   background: rgba(16, 22, 16, 0.94);
