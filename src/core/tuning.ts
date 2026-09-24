@@ -14,7 +14,8 @@ export const TUNING = {
   sunDripPerSecond: 6,
   sunHitBonus: 40,
   killSunByAct: [50, 100, 150, 200, 300], // 消灭僵尸按其所属幕奖励的阳光(Act1 → Act5)
-  actRepeatRounds: [2, 2, 2, 1, 1], // 各幕同词重复轮数:Act1-3 每词 2 只(第2轮反向),Act4 头目/Act5 终局单只
+  actRepeatRounds: [1, 2, 2, 1, 1], // 各幕同词重复轮数:Act1 纯教学单只;Act2-3 复习每词 2 只(第2轮反向);Act4 头目/Act5 终局单只
+  newRecallAct2Share: 0.6, // 教学后的新词反向练习分入 Act2 的比例,其余进 Act3
   reloadSleepMs: 12000,
   bossHp: 9, // 头目血量(基数上按记忆档折算,仍远厚于普通怪)
   bossSpeed: 75, // 头目移动速度(快于普通僵尸,逼抢走位)

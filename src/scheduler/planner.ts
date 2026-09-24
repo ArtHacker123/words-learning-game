@@ -13,6 +13,12 @@ import { appendEncounter, latestEncounter } from "../core/stats";
 
 /** SRS 调度器:间隔阶梯 + 威胁指数 + 每日计划 + Boss 提名 */
 
+/**
+ * 计划语义版本:分幕分派 / 重复轮次 / 练习分配等生成规则变化时 +1。
+ * 快照中的计划落后于该版本(或缺省)即判为陈旧,由 app 用新规则重建当日计划。
+ */
+export const PLAN_VERSION = 1;
+
 export function initWordStats(
   wordId: string,
   introducedDay: number,
@@ -185,6 +191,12 @@ export function buildPlanForIds(
   const act2Ids = reviewIds.slice(0, half);
   const act3Ids = reviewIds.slice(half);
 
+  // 教学后的新词反向练习:每新词 1 只 reverse、无提示,按比例分入 Act2/Act3
+  // (Act1 只保留教学,练习不参与复习翻倍,故在统一重复轮次之后再追加)
+  const recallSplit = Math.round(newIds.length * TUNING.newRecallAct2Share);
+  const act2Recall = newIds.slice(0, recallSplit);
+  const act3Recall = newIds.slice(recallSplit);
+
   const acts: ActPlan[] = [
     { act: 1, zombies: newIds.map(specZ("forward", true, false, 1)) },
     { act: 2, zombies: act2Ids.map((id) => specZ(hashDirection(id, 2), false, false, 2)(id)) },
@@ -197,6 +209,10 @@ export function buildPlanForIds(
   for (const a of acts) {
     a.zombies = repeatRounds(a.zombies, TUNING.actRepeatRounds[a.act - 1] ?? 1);
   }
+
+  // 练习副本各 1 只追加到对应幕末尾(Act1 纯教学,练习挪到 Act2/Act3)
+  acts.find((a) => a.act === 2)?.zombies.push(...act2Recall.map((id) => specZ("reverse", false, false, 2)(id)));
+  acts.find((a) => a.act === 3)?.zombies.push(...act3Recall.map((id) => specZ("reverse", false, false, 3)(id)));
 
   // 恒 5 幕:第 5 幕「终局」= 一只跨 lane 接力 boss,体内轮换「全网 Top3 最难词」
   // (难度打分高优先、威胁高次之、id 收尾),可与 Act4 头目词不同;无复习词时回退 Act4 词。
@@ -329,6 +345,11 @@ export function ensureChunks(snap: DaySnapshot): DaySnapshot {
   if (Array.isArray(anySnap.plans) && anySnap.plans.length) return snap;
   const plan = ensureAct5(anySnap.plan ?? { day: snap.day, newWords: [], acts: [], bossCandidates: [] });
   return { day: snap.day, plans: [plan], played: 0, stats: snap.stats ?? [] };
+}
+
+/** 计划是否陈旧(生成规则已演进):缺版本号或低于当前 PLAN_VERSION → 需要重建当日计划 */
+export function isStalePlan(snap: DaySnapshot): boolean {
+  return (snap.planVersion ?? 0) < PLAN_VERSION;
 }
 
 /** 幕内词重复:各幕把同词的第二只以相反方向复现,第二轮不显示答案提示(教完即反向回忆)。 */

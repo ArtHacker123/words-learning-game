@@ -13,6 +13,8 @@ import {
   ensureChunks,
   countPlanWords,
   hashDirection,
+  isStalePlan,
+  PLAN_VERSION,
 } from "../src/scheduler/planner";
 import { TUNING, ACT_REVERSE_RATIO } from "../src/core/tuning";
 import type { Word, WordStats, EncounterOutcome, DailyPlan } from "../src/core/model";
@@ -73,26 +75,29 @@ describe("planner: 到期判定 isDue", () => {
 describe("planner: 当日计划生成", () => {
   const words: Word[] = Array.from({ length: 15 }, (_, i) => ({ id: `w${i + 1}`, foreign: `w${i + 1}`, chinese: `词${i + 1}` }));
 
-  it("未学超 10 个时:新词取前 10 全进 Act1;空幕由已学词兜底,恒 5 幕", () => {
+  it("未学超 10 个时:新词取前 10 全进 Act1 纯教学;练习按 60/40 分派 Act2/3,恒 5 幕", () => {
     const map = new Map<string, WordStats>();
     const plan = buildDailyPlan(words, map, 1);
     expect(plan.newWords).toHaveLength(10);
     expect(plan.newWords[0]).toBe("w1");
-    // 恒 5 幕(第 2~4 幕由 Act1 的新词借词填充;Act5 由 Act4 词接力);Act1-3 每词重复 2 只
+    // 恒 5 幕(第 2~4 幕由 Act1 的新词借词填充;Act5 由 Act4 词接力);Act1 纯教学不翻倍
     expect(plan.acts).toHaveLength(5);
     expect(plan.acts[0].act).toBe(1);
-    expect(plan.acts[0].zombies).toHaveLength(20);
-    // 第 1 轮:教学正向(带提示);第 2 轮:反向复现、不再给提示
-    for (const z of plan.acts[0].zombies.slice(0, 10)) {
+    expect(plan.acts[0].zombies).toHaveLength(10);
+    // Act1 纯教学:每词 1 只、正向、带提示,不再同幕反向复现
+    for (const z of plan.acts[0].zombies) {
       expect(z.teaching).toBe(true);
       expect(z.direction).toBe("forward");
       expect(z.boss).toBe(false);
     }
-    for (const z of plan.acts[0].zombies.slice(10)) {
-      expect(z.teaching).toBe(false);
-      expect(z.direction).toBe("reverse");
-      expect(z.boss).toBe(false);
-    }
+    // 教学后的反向练习拆到 Act2/Act3:60%(6词)进 Act2,40%(4词)进 Act3,无提示
+    const act2 = plan.acts.find((a) => a.act === 2)!;
+    const act3 = plan.acts.find((a) => a.act === 3)!;
+    const act2Recall = new Set(act2.zombies.filter((z) => !z.teaching && z.direction === "reverse").map((z) => z.wordId));
+    const act3Recall = new Set(act3.zombies.filter((z) => !z.teaching && z.direction === "reverse").map((z) => z.wordId));
+    for (const id of ["w1", "w2", "w3", "w4", "w5", "w6"]) expect(act2Recall.has(id)).toBe(true);
+    for (const id of ["w7", "w8", "w9", "w10"]) expect(act3Recall.has(id)).toBe(true);
+    expect(act3Recall.has("w6")).toBe(false); // 60/40 边界不重叠
     for (const a of plan.acts) expect(a.zombies.length).toBeGreaterThan(0);
   });
 
@@ -133,7 +138,8 @@ describe("planner: 当日计划生成", () => {
       intervalRung: 4,
     });
 
-    const plan = buildDailyPlan(words, map, 7);
+    // 仅传 w1-w5(其余 w6-w15 未学属新词,会生成练习词干扰本次均分断言)
+    const plan = buildDailyPlan(words.slice(0, 5), map, 7);
     // 复习池 = [w1..w4](w5 未到期),难度排序 [w1,w2,w3](score1)+[w4](score3);
     // 对半均分:act2=[w1,w2], act3=[w3,w4](每词 2 只)
     expect(plan.acts.find((a) => a.act === 2)?.zombies.map((z) => z.wordId).sort()).toEqual(["w1", "w1", "w2", "w2"]);
@@ -363,24 +369,26 @@ describe("planner: hashDirection 各幕反向占比", () => {
 describe("planner: 恒五幕非空(修复从 Act3 开局)", () => {
   const words: Word[] = Array.from({ length: 12 }, (_, i) => ({ id: `w${i + 1}`, foreign: `w${i + 1}`, chinese: `词${i + 1}` }));
 
-  it("全为未学新词:Act1 满,其余幕从新词借词,每词按幕重复轮数、恒 5 幕", () => {
+  it("全为未学新词:Act1 纯教学,练习 60/40 进 Act2/3,恒 5 幕", () => {
     const map = new Map<string, WordStats>();
     const plan = buildDailyPlan(words, map, 1);
     expect(plan.acts).toHaveLength(5);
     for (const a of plan.acts) expect(a.zombies.length).toBeGreaterThan(0);
-    // 各幕每词恰好出现 actRepeatRounds 次(Act1-3 各 2 次,Act4 头目 1 次)
-    for (const a of plan.acts) {
-      const counts = new Map<string, number>();
-      for (const z of a.zombies) counts.set(z.wordId, (counts.get(z.wordId) ?? 0) + 1);
-      for (const c of counts.values()) expect(c).toBe(TUNING.actRepeatRounds[a.act - 1]);
-    }
-    // 首幕第 1 轮教学词为新词且正向
-    const r1 = plan.acts[0].zombies.slice(0, plan.acts[0].zombies.length / TUNING.actRepeatRounds[0]);
-    for (const z of r1) {
+    // Act1 纯教学:每新词 1 只正向带提示(不再同幕反向复现)
+    for (const z of plan.acts[0].zombies) {
       expect(z.teaching).toBe(true);
       expect(z.direction).toBe("forward");
       expect(map.has(z.wordId)).toBe(false);
     }
+    // 复习词按幕轮数:(无到期时)借词入 Act2/3 仍翻倍,练习副本各 1 只
+    // 教学后的反向练习按 60/40 分派:Act2 收 6 词、Act3 收 4 词,无提示
+    const act2 = plan.acts.find((a) => a.act === 2)!;
+    const act3 = plan.acts.find((a) => a.act === 3)!;
+    const act2Recall = new Set(act2.zombies.filter((z) => !z.teaching && z.direction === "reverse").map((z) => z.wordId));
+    const act3Recall = new Set(act3.zombies.filter((z) => !z.teaching && z.direction === "reverse").map((z) => z.wordId));
+    for (const id of ["w1", "w2", "w3", "w4", "w5", "w6"]) expect(act2Recall.has(id)).toBe(true);
+    for (const id of ["w7", "w8", "w9", "w10"]) expect(act3Recall.has(id)).toBe(true);
+    expect(act3Recall.has("w6")).toBe(false); // 60/40 边界不重叠
     // 借词到 Act2+ 不再带答案提示(复测不显示头顶中文)
     for (const a of plan.acts.slice(1)) {
       for (const z of a.zombies) expect(z.teaching).toBe(false);
@@ -565,5 +573,25 @@ describe("planner: ensureChunks 快照迁移(单 plan → plans[]+played)", () =
   it("已是新结构 → 原样返回(幂等,不重置 played)", () => {
     const snap = { day: 4, plans: [{ day: 4, newWords: [], acts: [], bossCandidates: [] }], played: 2, stats: [{ wordId: "x", intervalRung: 0, threatIndex: 0, introducedDay: 1, introducedBatch: 0, encounterHistory: [] }] };
     expect(ensureChunks(snap)).toBe(snap);
+  });
+});
+
+describe("planner: PLAN_VERSION / isStalePlan(计划语义版本)", () => {
+  const mkSnap = (planVersion?: number) => ({ day: 1, planVersion, plans: [{ day: 1, newWords: [], acts: [], bossCandidates: [] }], played: 0, stats: [] });
+
+  it("缺版本号(旧档)→ 陈旧,需重建", () => {
+    expect(isStalePlan(mkSnap())).toBe(true);
+  });
+
+  it("版本号低于当前 → 陈旧", () => {
+    expect(isStalePlan(mkSnap(PLAN_VERSION - 1))).toBe(true);
+  });
+
+  it("等于当前版本 → 不陈旧", () => {
+    expect(isStalePlan(mkSnap(PLAN_VERSION))).toBe(false);
+  });
+
+  it("后续版本 → 不陈旧(向前兼容)", () => {
+    expect(isStalePlan(mkSnap(PLAN_VERSION + 1))).toBe(false);
   });
 });

@@ -73,6 +73,8 @@ export interface DailyPlan {
 export interface DaySnapshot {
   day: number;
   profile?: ProfileId;
+  /** 计划语义版本:planner 分幕/练习规则变化时 +1;旧版快照(含缺省)判为陈旧,由 app 重建当日计划。 */
+  planVersion?: number;
   /** 当日分块计划:一局=一块(每块 ≤ sessionWordCap 词),顺序即推进顺序;跨块互不重叠。 */
   plans: DailyPlan[];
   /** 已胜利完结的块数(推进指针):失败/未打完不计入;只有块胜利才 +1。 */

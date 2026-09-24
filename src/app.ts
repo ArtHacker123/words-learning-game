@@ -1,8 +1,8 @@
-import type { Word, ProfileId } from "./core/model";
+import type { Word, ProfileId, DaySnapshot } from "./core/model";
 import { TUNING, ACT_PRESSURE } from "./core/tuning";
 import wordHash from "./core/hash";
 import { saveWords, saveStats, getStatsByWordId, getAllWords, getMeta, setMeta, saveSnapshot, getSnapshot, deleteSnapshot, resetProfile, getActiveProfile, setActiveProfile } from "./store/db";
-import { initWordStats, buildDailyChunks, commitOutcome, graduateBoss, ensureChunks } from "./scheduler/planner";
+import { initWordStats, buildDailyChunks, commitOutcome, graduateBoss, ensureChunks, isStalePlan, PLAN_VERSION } from "./scheduler/planner";
 import { eligibleForDiamond } from "./core/awards";
 import { Battle, pickAutoTarget } from "./battle/battle";
 import { BattleRenderer } from "./render/renderer";
@@ -23,6 +23,36 @@ export async function initApp(): Promise<void> {
     ui.state.profile = profile;
   }
 
+  /**
+   * 确保当日快照最新:快照缺失或计划陈旧(planner 规则演进)时,用当前账本重建当日全部计划。
+   * 返回最新快照;无词表返回 null。
+   */
+  async function ensureTodayPlan(today: number): Promise<DaySnapshot | null> {
+    const allWords = await getAllWords(profile);
+    if (!allWords.length) return null;
+    const stats = await getStatsByWordId(profile);
+    const existing = await getSnapshot(profile, today);
+    if (existing && !isStalePlan(existing)) {
+      // 当天已有最新计划的快照:迁移防御(旧单 plan 档)后原样恢复,不覆盖基线。
+      const snap = ensureChunks(existing);
+      if (snap !== existing) await saveSnapshot(profile, snap);
+      return snap;
+    }
+    // 重建:初始化未学过词的 stats,introducedDay=today,再用新规则生成当日全部计划。
+    const newList = allWords.filter((w) => !stats.has(w.id));
+    for (const w of newList) {
+      const s = initWordStats(w.id, today, 0);
+      stats.set(w.id, s);
+    }
+    const plans = buildDailyChunks(allWords, stats, today, TUNING.sessionWordCap);
+    const snap: DaySnapshot = { day: today, plans, played: 0, stats: [...stats.values()], profile, planVersion: PLAN_VERSION };
+    await saveStats(profile, [...stats.values()]);
+    await setMeta(profile, "day", today);
+    await saveSnapshot(profile, snap);
+    ui.state.today = today;
+    return snap;
+  }
+
   async function refreshMenu(): Promise<void> {
     await loadProfile();
     ui.updateHud();
@@ -37,7 +67,7 @@ export async function initApp(): Promise<void> {
     ui.state.today = today;
     const diamond = (await getMeta(profile, "diamond")) ?? 0;
     ui.state.diamond = diamond;
-    const snap = await getSnapshot(profile, today);
+    const snap = await ensureTodayPlan(today);
     if (snap) {
       ui.state.plans = snap.plans;
       ui.state.sessionIdx = snap.played;
@@ -89,41 +119,12 @@ export async function initApp(): Promise<void> {
 
   ui.onCreatePlan(async () => {
     const today = (await getMeta(profile, "day")) ?? 1;
-    const allWords = await getAllWords(profile);
-    if (!allWords.length) return;
-    const existing = await getSnapshot(profile, today);
-    if (existing) {
-      // 当天已有快照:恢复当日分块计划与基线,不再重初始化、不覆盖基线(当天体验保持一致)。
-      // 分块上线前的旧快照只有单 plan(可能只有 4 幕)→ ensureChunks 统一迁移成分块结构并补终局幕。
-      const snap = ensureChunks(existing);
-      await saveSnapshot(profile, snap);
-      ui.state.words = allWords;
-      ui.state.statsByWord = await getStatsByWordId(profile);
-      ui.state.plans = snap.plans;
-      ui.state.sessionIdx = snap.plans.length > 0 ? snap.played : 0;
-      ui.state.plan = snap.plans[snap.played] ?? null;
-      ui.state.today = today;
-      ui.renderMainMenu();
-      return;
-    }
-    const stats = await getStatsByWordId(profile);
-    const newList = allWords.filter((w) => !stats.has(w.id));
-    // 初始化未学过词的 stats,introducedDay=today
-    for (const w of newList) {
-      const s = initWordStats(w.id, today, 0);
-      stats.set(w.id, s);
-    }
-    // 分块计划:一局=一块(≤sessionWordCap 词),按序推进覆盖当日全部待复习词
-    const plans = buildDailyChunks(allWords, stats, today, TUNING.sessionWordCap);
-    await saveStats(profile, [...stats.values()]);
-    await setMeta(profile, "day", today);
-    await saveSnapshot(profile, { day: today, plans, played: 0, stats: [...stats.values()], profile });
-    ui.state.words = allWords;
-    ui.state.statsByWord = stats;
-    ui.state.plans = plans;
-    ui.state.sessionIdx = 0;
-    ui.state.plan = plans[0] ?? null;
-    ui.state.today = today;
+    const snap = await ensureTodayPlan(today);
+    if (!snap) return;
+    ui.state.plans = snap.plans;
+    ui.state.sessionIdx = snap.plans.length > 0 ? snap.played : 0;
+    ui.state.plan = snap.plans[snap.played] ?? null;
+    await loadProfile();
     ui.renderMainMenu();
   });
 
@@ -167,14 +168,13 @@ export async function initApp(): Promise<void> {
   ui.state.today = today;
   const diamond = (await getMeta(profile, "diamond")) ?? 0;
   ui.state.diamond = diamond;
-  // 同一天刷新/回访:恢复当日分块计划与推进进度(played),菜单按进度展示
-  const snap = await getSnapshot(profile, today);
+  // 同一天刷新/回访:恢复当日分块计划与推进进度(played),菜单按进度展示;
+  // 计划陈旧(planner 规则演进)时自动重建,避免沿用旧语义的当日计划。
+  const snap = await ensureTodayPlan(today);
   if (snap) {
-    const restored = ensureChunks(snap);
-    if (restored !== snap) await saveSnapshot(profile, restored); // 旧单 plan 档落库为分块结构,runSession 才拿得到 plans[]
-    ui.state.plans = restored.plans;
-    ui.state.sessionIdx = restored.played;
-    ui.state.plan = restored.plans[restored.played] ?? null;
+    ui.state.plans = snap.plans;
+    ui.state.sessionIdx = snap.played;
+    ui.state.plan = snap.plans[snap.played] ?? null;
   }
   const allWords = await getAllWords(profile);
   if (allWords.length) {
