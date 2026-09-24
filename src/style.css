@@ -6,6 +6,33 @@ html, body { color: #e8f0e8; background: #101610; height: 100%; font-family: -ap
 #base.siege { color: #ff6a5a; animation: base-siege-pulse 0.9s ease-in-out infinite; text-shadow: 0 0 8px rgba(255, 60, 40, 0.7); }
 @keyframes base-siege-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 #screen { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 12px; }
+
+/* 报幕词:居中放大浮层,停留后淡出(不挡操作) */
+.banner {
+  position: fixed;
+  left: 50%;
+  top: 33%;
+  transform: translate(-50%, -50%);
+  z-index: 60;
+  padding: 18px 36px;
+  background: rgba(14, 20, 14, 0.88);
+  border: 2px solid #4a6a3a;
+  border-radius: 12px;
+  color: #ffe9a8;
+  font-size: 80px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  opacity: 0;
+}
+.banner.show { animation: bannerIn 2s ease forwards; }
+@keyframes bannerIn {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }
+  12% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  80% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
+}
 .battle { display: flex; flex-direction: column; gap: 10px; position: fixed; inset: 53px 12px 12px; overflow: hidden; }
 .panel { display: flex; flex-direction: column; gap: 12px; max-width: 560px; margin: auto; padding: 24px; background: #16221a; border: 1px solid #334a33; border-radius: 10px; }
 .panel h2 { color: #d8f0a0; }

@@ -24,6 +24,7 @@ export interface SpriteArgs {
   frozen?: boolean; // 冻结中:行走动画停摆
   dying?: boolean; // 倒地淡出动画中的僵尸快照
   ultimate?: boolean; // 终局接力 boss(跨全 lane 的巨大身躯)
+  actScale?: number; // 按当前 Act 逐步放大身躯(Act1 最小→Act4 更大),上限被 lane 高钳制
   direction: "forward" | "reverse";
 }
 
@@ -59,7 +60,7 @@ export class BattleRenderer {
   private floaters: { x: number; y: number; text: string; color: string; t0: number }[] = [];
   private baseHitFlash = 0; // 基地被咬一口后的红闪剩余秒数
   // 僵尸死亡倒地特效(renderer 层快照,不改动战斗逻辑)
-  private zSnap = new Map<string, { x: number; lane: number; boss: boolean; buffed: boolean; wordId: string; direction: "forward" | "reverse"; ultimate: boolean }>();
+  private zSnap = new Map<string, { x: number; lane: number; boss: boolean; buffed: boolean; wordId: string; direction: "forward" | "reverse"; ultimate: boolean; actScale: number }>();
   private dying: (typeof this.zSnap extends Map<string, infer S> ? S & { id: string; t0: number } : never)[] = [];
 
   setSelected(p: Plant | null): void {
@@ -219,6 +220,7 @@ export class BattleRenderer {
         wordId: z.wordId,
         direction: z.direction,
         ultimate: !!z.ultimate,
+        actScale: z.ultimate ? 1 : this.actSizeScale(),
       });
     }
     for (const [id, s] of this.zSnap) {
@@ -255,6 +257,7 @@ export class BattleRenderer {
         ultimate: dy.ultimate,
         direction: dy.direction,
         dying: true,
+        actScale: dy.actScale ?? 1,
       });
       ctx.restore();
     }
@@ -357,11 +360,18 @@ export class BattleRenderer {
     ctx.restore();
   }
 
+  /** 按当前 Act 的身躯放大系数:Act1=1.0 起步,每进一幕 +28%(Act4 约增大 84%,明显可见),
+    终局 boss 除外(本就跨 lane)。实际半径仍被 zombieRadius 按 lane 高钳制,不会越界。 */
+  private actSizeScale(): number {
+    const act = Math.max(1, Math.min(4, this.battle.currentAct ?? 1));
+    return 1 + (act - 1) * 0.28;
+  }
+
   private spriteArgs(z: Zombie): SpriteArgs {
     const strength = z.boss ? 2 : z.buffed ? 1 : 0;
     const word = this.words.get(z.wordId);
     const text = z.direction === "forward" ? word?.foreign ?? "?" : word?.chinese ?? "?";
-    return { kind: "zombie", text, strength, teaching: z.teaching, boss: z.boss, buffed: z.buffed, ultimate: z.ultimate, direction: z.direction };
+    return { kind: "zombie", text, strength, teaching: z.teaching, boss: z.boss, buffed: z.buffed, ultimate: z.ultimate, direction: z.direction, actScale: z.ultimate ? 1 : this.actSizeScale() };
   }
 
   private drawZombie(ctx: CanvasRenderingContext2D, z: Zombie, flashing = false): void {
@@ -369,6 +379,7 @@ export class BattleRenderer {
     const cx = z.x + 30;
     // 终局 boss 横跨全 lane:锚点取画布纵向中轴
     const y = z.ultimate ? this.canvas.clientHeight / 2 : z.lane * laneH + laneH / 2;
+    const r = zombieRadius(z.ultimate ? 1 : this.actSizeScale(), z.boss ? 2 : z.buffed ? 1 : 0, !!z.boss, !!z.ultimate, laneH);
     const d: DrawContext = { ctx, w: this.canvas.clientWidth, h: this.canvas.clientHeight, time: this.time, laneHeight: laneH };
     this.drawer(d, cx, y, { ...this.spriteArgs(z), frozen: z.frozenUntil > this.battle.time });
 
@@ -378,54 +389,56 @@ export class BattleRenderer {
       ctx.globalAlpha = 0.55;
       ctx.fillStyle = "#fff";
       ctx.beginPath();
-      ctx.arc(cx, y, z.ultimate ? laneH * 1.4 : 20, 0, Math.PI * 2);
+      ctx.arc(cx, y, z.ultimate ? laneH * 1.4 : r, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
 
-    // 教学僵头顶答案气泡
+    // 教学僵头顶答案气泡:固定在头顶上方显眼处,不受 lane 边界约束(允许溢出车道)
+    const teachY = y - r * 1.15 - 14;
     if (z.teaching) {
       const word = this.words.get(z.wordId);
       const label = z.direction === "forward" ? word?.chinese ?? "?" : word?.foreign ?? "?";
       ctx.fillStyle = "rgba(255,255,255,0.9)";
       ctx.beginPath();
-      ctx.arc(cx, y - 42, 18, 0, Math.PI * 2);
+      ctx.arc(cx, teachY, 18, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#222";
       ctx.font = "12px sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText(label, cx, y - 38);
+      ctx.fillText(label, cx, teachY + 4);
     }
 
     // 啃食植物 / 攻城咬基地 提示气泡
+    const tipY = teachY - 28;
     if (z.nibblingPlantId && this.battle.plants.some((p) => p.id === z.nibblingPlantId)) {
       ctx.fillStyle = "rgba(255,236,200,0.92)";
       ctx.beginPath();
-      ctx.roundRect(cx - 22, y - 62, 44, 20, 6);
+      ctx.roundRect(cx - 22, tipY, 44, 20, 6);
       ctx.fill();
       ctx.fillStyle = "#7a4a00";
       ctx.font = "bold 11px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("啃啃", cx, y - 52);
+      ctx.fillText("啃啃", cx, tipY + 10);
       ctx.textBaseline = "alphabetic";
     } else if (z.reachedBase) {
       ctx.fillStyle = "rgba(255,90,90,0.92)";
       ctx.beginPath();
-      ctx.roundRect(cx - 22, y - 62, 44, 20, 6);
+      ctx.roundRect(cx - 22, tipY, 44, 20, 6);
       ctx.fill();
       ctx.fillStyle = "#8a1a1a";
       ctx.font = "bold 11px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("🔨基地", cx, y - 52);
+      ctx.fillText("🔨基地", cx, tipY + 10);
       ctx.textBaseline = "alphabetic";
     }
 
     // hp 条:终局 boss 用横贯底部的总血条 + 词段刻痕 + 「段落 n/N」
     const hpw = z.ultimate ? Math.min(260, this.canvas.clientWidth * 0.45) : 46;
     const hpRatio = Math.min(1, z.hp / z.maxHp);
-    const barY = z.ultimate ? this.canvas.clientHeight - 22 : y + 34;
+    const barY = z.ultimate ? this.canvas.clientHeight - 22 : y + r * 1.15 + 12;
     ctx.fillStyle = "#333";
     ctx.fillRect(cx - hpw / 2, barY, hpw, 6);
     ctx.fillStyle = z.ultimate ? "#b886f0" : z.boss ? "#f33" : "#4caf50";
@@ -535,15 +548,22 @@ const Z_ANIM = {
   sway: 0.09, // 身体前倾幅度(弧度)
 };
 
+/** 身躯半径:普通僵尸 18 起步按 Act 放大、受 lane 高钳制不越界;
+    终局 boss 不做任何改动(保持 laneH*1.4 跨 lane 巨体)。与 placeholderDrawer 内计算保持一致。 */
+function zombieRadius(actScale: number, strength: number, boss: boolean, ultimate: boolean, laneH: number): number {
+  if (ultimate) return laneH * 1.4; // 终局大 boss:完全不变
+  const raw = 18 * actScale * (1 + strength * 0.25 + (boss ? 0.8 : 0));
+  const maxR = Math.max(18, (laneH - 18) / 2.17); // 身体+腿高 ≈ r*2.17+18,须 ≤ laneH
+  return Math.min(raw, maxR);
+}
+
 /** 占位码绘制:植物 emoji + 单词牌;僵尸分层像素风(腿/身体/手臂/眼/牙/胸前词牌) */
 export const placeholderDrawer: SpriteDrawer = (d, x, y, args) => {
   const { ctx } = d;
   if (args.kind === "zombie") {
     // 终局 boss:跨约 4 条车道的巨体(非整场,3~5 lane 之间按车道高缩放)
     const laneH = d.laneHeight ?? d.h / 5;
-    const r = args.ultimate
-      ? laneH * 1.4
-      : 18 * (1 + args.strength * 0.25 + (args.boss ? 0.8 : 0));
+    const r = zombieRadius(args.actScale ?? 1, args.strength, !!args.boss, !!args.ultimate, laneH);
     const scale = r / 18;
     // 行走动画:时间驱动摆动;冻结或倒地时定格
     const frozen = !!args.frozen || !!args.dying;
@@ -705,8 +725,8 @@ export const placeholderDrawer: SpriteDrawer = (d, x, y, args) => {
     }
 
     // 单词牌:浅底深字,挂绳两条,不随身体摇摆(保证可读)。
-    // 位置放在血条上方(普通:y+34 血条,终局:底部 h-22 血条),避免遮挡面部。
-    const hpBarY = args.ultimate ? d.h - 22 : y + 34;
+    // 位置放在血条上方(普通:身体下沿 y+r*1.15+12 血条,终局:底部 h-22 血条),避免遮挡面部。
+    const hpBarY = args.ultimate ? d.h - 22 : y + r * 1.15 + 12;
     const fs = args.ultimate
       ? Math.max(16, Math.min(26, Math.round(d.w / 30)))
       : Math.max(10, Math.min(16, Math.round(9 * scale + 2)));

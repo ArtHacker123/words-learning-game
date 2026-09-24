@@ -242,7 +242,7 @@ async function runSession(
     battle.setActWave(actPlan.zombies, p.spawnInterval, p.maxAlive, actNo, p.parallelProb);
     gameMode = null;
     renderer.setSelected(null);
-    ui.setMsg(`—— ${actNames[actNo]} ——`);
+    ui.showBanner(`—— ${actNames[actNo]} ——`);
     updateHud(ui, battle);
   };
 

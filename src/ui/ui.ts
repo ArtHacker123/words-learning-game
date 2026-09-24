@@ -71,6 +71,8 @@ export class UI {
     onUpgradeClose?: () => void;
   } = {};
 
+  private bannerTimer = 0; // 报幕浮层自动消失计时
+
   constructor(root: HTMLElement) {
     this.root = root;
     this.root.innerHTML = this.layout();
@@ -348,6 +350,21 @@ export class UI {
     void el.offsetWidth;
     if (msg) el.classList.add("toast");
     else el.classList.remove("toast");
+  }
+
+  /** 报幕词:居中放大的独立浮层,停留约 ms 毫秒后淡出(用于每个 Act 开场)。 */
+  showBanner(text: string, ms = 2000): void {
+    window.clearTimeout(this.bannerTimer);
+    const scr = this.root.querySelector("#screen")!;
+    const old = scr.querySelector(".banner");
+    if (old) old.remove();
+    const el = document.createElement("div");
+    el.className = "banner";
+    el.textContent = text;
+    scr.appendChild(el);
+    void el.offsetWidth; // 重触发入场动画(连播时)
+    el.classList.add("show");
+    this.bannerTimer = window.setTimeout(() => el.remove(), ms);
   }
 
   onImport(fn: (lines: string[]) => void): void { this.handlers.onImport = fn; }
