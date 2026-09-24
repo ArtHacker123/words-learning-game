@@ -177,9 +177,9 @@ export function buildPlanForIds(
     .sort((a, b) => threat(statsByWord, b) - threat(statsByWord, a))
     .slice(0, 3);
 
-  // 复习池 = 到期 ∪ 上次失败,剔除已入 Act4 的头目词(头目只答一次,不与 Act3 重复)。
+  // 复习池 = 到期 ∪ 上次失败,剔除已入 Act4 头目幕的词(头目只答一次,不与 Act2/3 重复)。
   // 按难度(打分)升序排齐,再对半均分:较易一半进 Act2、较难一半进 Act3 → 数量均匀 + 难度渐进。
-  const reviewIds = [...new Set([...dueIds, ...urgentIds])]
+  const reviewPool = [...new Set([...dueIds, ...urgentIds])]
     .filter((id) => !bossIds.includes(id))
     .sort(
       (a, b) =>
@@ -187,6 +187,21 @@ export function buildPlanForIds(
         threat(statsByWord, a) - threat(statsByWord, b) ||
         a.localeCompare(b),
     );
+
+  // Act4 头目幕至少 3 个不同词:真头目(threat>0)优先;不足时从复习池按难度补足
+  // (错词 > 长间隔 > 短间隔,难度降序),补位词同样按头目幕强度(boss=true,血厚),但不进 bossCandidates。
+  const act4Ids = [...bossIds];
+  const hardPool = [...reviewPool].sort(
+    (a, b) =>
+      difficultyScore(statsByWord.get(b)) - difficultyScore(statsByWord.get(a)) ||
+      threat(statsByWord, b) - threat(statsByWord, a) ||
+      b.localeCompare(a),
+  );
+  for (const id of hardPool) {
+    if (act4Ids.length >= TUNING.act4MinWords) break;
+    act4Ids.push(id);
+  }
+  const reviewIds = reviewPool.filter((id) => !act4Ids.includes(id));
   const half = Math.ceil(reviewIds.length / 2);
   const act2Ids = reviewIds.slice(0, half);
   const act3Ids = reviewIds.slice(half);
@@ -201,7 +216,7 @@ export function buildPlanForIds(
     { act: 1, zombies: newIds.map(specZ("forward", true, false, 1)) },
     { act: 2, zombies: act2Ids.map((id) => specZ(hashDirection(id, 2), false, false, 2)(id)) },
     { act: 3, zombies: act3Ids.map((id) => specZ(hashDirection(id, 3), false, false, 3)(id)) },
-    { act: 4, zombies: bossIds.map((id) => specZ(hashDirection(id, 4), false, true, 4)(id)) },
+    { act: 4, zombies: act4Ids.map((id) => specZ(hashDirection(id, 4), false, true, 4)(id)) },
   ];
 
   fillEmptyActs(acts, words, statsByWord);
