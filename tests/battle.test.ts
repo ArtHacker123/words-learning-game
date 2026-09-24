@@ -185,6 +185,110 @@ describe("终局 boss(Act5): 跨 lane 接力", () => {
   });
 });
 
+describe("终局护卫小怪(Act5 前后各一对 lane1/3)", () => {
+  const ultimateSpec = (wordIds: string[], dirs: ("forward" | "reverse")[]) => {
+    const cycle = wordIds.map((wordId, i) => ({ wordId, direction: dirs[i] }));
+    return { wordId: wordIds[0], direction: dirs[0], teaching: false, boss: true, act: 5, ultimate: true, cycle };
+  };
+
+  /** 通过出怪队列喂入终局 boss,经 tick 自然 spawn(跑 spawnUltimateEscorts)。 */
+  function battleWithBoss(bossWordIds: string[], bossDirs: ("forward" | "reverse")[]) {
+    const b = new Battle({
+      zombies: [ultimateSpec(bossWordIds, bossDirs)],
+      spawnInterval: 1,
+      maxAlive: 6,
+      words: words(),
+      statsByWord: stats(),
+      events: {},
+    });
+    b.setField(800, 600, 5);
+    b.tick(0.1); // 首帧出怪
+    return b;
+  }
+
+  const escortsOf = (b: Battle) => b.zombies.filter((z) => z.escortOf);
+
+  it("spawn:共 4 只,lane 分布 [1,3,1,3],前后偏移 ±gap,词=首段词", () => {
+    const b = battleWithBoss(["a", "b", "c"], ["forward", "reverse", "forward"]);
+    const boss = b.zombies.find((z) => z.ultimate)!;
+    expect(b.zombies).toHaveLength(5); // 1 boss + 4 护卫
+    const esc = escortsOf(b);
+    expect(esc).toHaveLength(4);
+    expect(esc.every((z) => z.escortOf === boss.id)).toBe(true);
+    // lane 分布:两前(负偏移)两后(正偏移),各占 lane1/3
+    expect(esc.filter((z) => z.lane === 1)).toHaveLength(2);
+    expect(esc.filter((z) => z.lane === 3)).toHaveLength(2);
+    expect(new Set(esc.map((z) => z.escortOffset))!.size).toBe(2); // 一对 ± 偏移值
+    const offsets = esc.map((z) => z.escortOffset!);
+    expect(offsets.filter((o) => o < 0)).toHaveLength(2);
+    expect(offsets.filter((o) => o > 0)).toHaveLength(2);
+    // 词段与首段一致
+    expect(esc.every((z) => z.wordId === boss.wordId && z.direction === boss.direction)).toBe(true);
+  });
+
+  it("跟随时不独立行走:x 每帧吸附到 boss.x+offset", () => {
+    const b = battleWithBoss(["a"], ["forward"]);
+    const boss = b.zombies.find((z) => z.ultimate)!;
+    const esc = escortsOf(b);
+    const before = boss.x;
+    b.tick(0.1);
+    const bossAfter = b.zombies.find((z) => z.ultimate)!;
+    expect(bossAfter.x).toBeLessThan(before);
+    for (const z of esc) {
+      const alive = b.zombies.find((zz) => zz.id === z.id);
+      if (alive) expect(alive.x).toBe(bossAfter.x + (alive.escortOffset ?? 0));
+    }
+  });
+
+  it("换段时护卫词/方向同步(b→reverse)", () => {
+    const b = battleWithBoss(["a", "b", "c"], ["forward", "reverse", "forward"]);
+    const boss = b.zombies.find((z) => z.ultimate)!;
+    const plant = b.placePlant("a", 1)!; // forward a → 默认中文标签
+    const seg = boss.maxHp / 3;
+    for (let i = 0; i < seg; i++) {
+      plant.reloadRemain = 0;
+      expect(b.fire(plant, boss).hit).toBe(true);
+    }
+    expect(boss.phaseIdx).toBe(1);
+    for (const z of escortsOf(b)) {
+      expect(z.wordId).toBe("b");
+      expect(z.direction).toBe("reverse");
+    }
+  });
+
+  it("击杀一只护卫:发第 5 幕阳光 + 该词记 success", () => {
+    const b = battleWithBoss(["a"], ["forward"]);
+    b.sun = 100;
+    const esc = escortsOf(b).find((z) => z.lane === 1)!;
+    const plant = b.placePlant("a", 1)!; // forward a → 中文标签
+    expect(esc.hp).toBe(TUNING.baseHp * TUNING.act5HpMultiplier); // 2 * 2 = 4
+    for (let i = 0; i < 4; i++) {
+      plant.reloadRemain = 0;
+      const res = b.fire(plant, esc);
+      expect(res.hit).toBe(true);
+    }
+    b.tick(0.1);
+    expect(b.zombies.some((z) => z.id === esc.id)).toBe(false);
+    expect(b.sun).toBeGreaterThanOrEqual(TUNING.killSunByAct[4]);
+    const out = b.getOutcomes().find((o) => o.wordId === "a");
+    expect(out?.success).toBe(true);
+  });
+
+  it("boss 死亡 → 存活护卫随之消失(不额外发奖、不记 success)", () => {
+    const b = battleWithBoss(["a"], ["forward"]);
+    const boss = b.zombies.find((z) => z.ultimate)!;
+    const esc = escortsOf(b);
+    expect(esc).toHaveLength(4);
+    boss.hp = 0;
+    boss.phaseIdx = 0;
+    b.tick(0.1);
+    // boss 及其护卫全部清场(单段 boss 直接击杀)
+    expect(b.zombies.every((z) => !z.ultimate && !z.escortOf)).toBe(true);
+    // 护卫未触发 kill:outcomes 只有 boss 的击毙(单词 success),阳光只发 boss 击杀奖一次
+    expect(b.getOutcomes().filter((o) => o.wordId === "a")).toHaveLength(1);
+  });
+});
+
 describe("Battle: 种植经济", () => {
   it("阳光充足可种,花费 30", () => {
     const b = newBattle([], {}, {});

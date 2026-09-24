@@ -30,6 +30,8 @@ export interface Zombie {
   ultimate?: boolean; // 终局接力 boss(跨全 lane 行进)
   phaseIdx?: number; // 当前接力词段游标
   cycle?: { wordId: string; direction: Direction }[]; // 接力词段(词段打空换下一个)
+  escortOf?: string; // 护卫小怪:所属终局 boss 的 id
+  escortOffset?: number; // 护卫小怪相对 boss 精灵中心的 x 偏移(+右/后扬 -左/前出)
 }
 
 export interface ZombieSpec {
@@ -152,6 +154,32 @@ export class Battle {
     return this.spawnQueue.length === 0 && this.zombies.length === 0;
   }
 
+  /** 终局 boss 出场护卫:前后各一对(lane1/3),词段与 boss 当前段一致,相对 x 偏移固定。 */
+  private spawnUltimateEscorts(boss: Zombie): void {
+    // 前后 x 偏移:前出(靠基地,负)>后扬(靠右边,正),以 boss 精灵中心为基准。
+    // 偏移必须 ≥ boss 身体半径,否则护卫会与大怪身体重叠;再加 50px 间距及护卫自身半径余量
+    const gap = this.spriteRadius(boss) + 50;
+    const formation: { lane: number; offset: number }[] = [
+      { lane: 1, offset: -gap },
+      { lane: 3, offset: -gap },
+      { lane: 1, offset: +gap },
+      { lane: 3, offset: +gap },
+    ];
+    for (const f of formation) {
+      const esc = makeZombie(
+        { wordId: boss.wordId, direction: boss.direction, teaching: false, boss: false, act: 5 },
+        f.lane,
+        this.statsByWord.get(boss.wordId),
+        boss.x,
+        this.statsByWord,
+      );
+      esc.escortOf = boss.id;
+      esc.escortOffset = f.offset;
+      esc.x = boss.x + f.offset;
+      this.zombies.push(esc);
+    }
+  }
+
   static size(w: number, h: number, laneCount: number): { fieldWidth: number; fieldHeight: number; laneHeight: number } {
     return { fieldWidth: w, fieldHeight: h, laneHeight: h / laneCount };
   }
@@ -184,6 +212,8 @@ export class Battle {
           const z = makeZombie(spec, lane, this.statsByWord.get(spec.wordId), this.fieldWidth + 40, this.statsByWord);
           this.zombies.push(z);
           this.currentAct = Math.max(this.currentAct, spec.act ?? 1);
+          // 终局 boss 出场:前后各一对护卫小怪(lane 1/3),同段词、相对位置固定
+          if (z.ultimate) this.spawnUltimateEscorts(z);
         }
         this.spawnTimer = this.spawnInterval;
       }
@@ -192,6 +222,13 @@ export class Battle {
     // 僵尸推进:凝固弹冻结中的僵尸暂停移动;撞上植物时停下啃食 2 秒后植物消失;
     // 到达基地的僵尸不消失,留在场上周期性"咬基地"直到基地沦陷。
     for (const z of this.zombies) {
+      // 护卫小怪:不独立行走/啃食/攻城,每帧吸附到所属 boss 的相对位置
+      if (z.escortOf) {
+        const boss = this.zombies.find((b) => b.id === z.escortOf);
+        if (!boss) continue; // boss 本帧已死亡消失,清理段负责移除
+        z.x = boss.x + (z.escortOffset ?? 0);
+        continue;
+      }
       if (z.frozenUntil > this.time) continue;
       // 攻城僵尸:原地周期性破坏基地(可被玩家射杀阻止)
       if (z.reachedBase) {
@@ -254,7 +291,14 @@ export class Battle {
 
     // 清掉死亡僵尸;到岸僵尸留在场上继续攻城(再被杀:直接退场,不再重复记录)
     const remaining: Zombie[] = [];
+    // 本帧死亡/退场的终局 boss,其护卫小怪随之消失(不额外发奖);
+    // 到岸但仍存活的 boss 保留护卫(它们跟着 boss 一起围攻)
+    const goneBossIds = new Set<string>();
     for (const z of this.zombies) {
+      if (z.ultimate && z.hp <= 0) goneBossIds.add(z.id);
+    }
+    for (const z of this.zombies) {
+      if (z.escortOf && goneBossIds.has(z.escortOf)) continue; // 护卫随 boss 一起退场
       if (z.hp <= 0) {
         if (z.reachedBase) continue; // 攻城僵尸被击退:已记录失败,不再走 kill 覆盖
         if (z.ultimate && (z.phaseIdx ?? 0) < (z.cycle?.length ?? 1) - 1) {
@@ -603,6 +647,13 @@ export class Battle {
       z.hp = z.maxHp - segHp * (z.phaseIdx); // 打到下一段上限(越段余量吸收)
       z.buffed = false;
       z.frozenUntil = Math.max(z.frozenUntil, this.time); // 换段即刻唤醒
+      // 护卫小怪词段同步:跟随大怪当前段词
+      for (const esc of this.zombies) {
+        if (esc.escortOf === z.id) {
+          esc.wordId = ph.wordId;
+          esc.direction = ph.direction;
+        }
+      }
     }
   }
 
