@@ -20,7 +20,7 @@ export const TUNING = {
   bossSpeed: 75, // 头目移动速度(快于普通僵尸,逼抢走位)
   ultimateBossHpScale: 3, // 终局 boss 总血 = 该词 Act4 头目 HP × N(恒定,不随词段数变化)
   act5HpMultiplier: 2, // 第 5 幕僵尸血量倍率(终局 boss 整体翻倍)
-  ultimateBossSpeed: 110, // 终局 boss 移速(跨 lane 压境)
+  ultimateBossSpeed: 77, // 终局 boss 移速(原先 110,降至约 70%:跨 lane 压境节奏放缓)
   ultimateSiegeDamage: 20, // 终局 boss 到岸每口咬基地伤害
   shockCount: 3, // 终局 boss 存活期间随机冲击波次数上限
   shockTw: 60, // 冲击波光带宽度(px)
