@@ -149,13 +149,22 @@ export class BattleRenderer {
       ctx.lineTo(w, (i + 1) * laneH);
       ctx.stroke();
     }
-    // 基地(左墙):被围攻时红色脉冲,咬一口时短促亮闪 + 向右溢红晕
+    // 基地(左墙):被围攻时红色脉冲,咬一口时短促亮闪 + 向右溢红晕;基地护甲生效时镀蓝盾光
     const besieged = this.battle.zombies.some((z) => z.reachedBase);
+    const armored = this.battle.baseArmorActive();
     const pulse = besieged ? (Math.sin((this.time / 1000) * 7) + 1) / 2 : 0;
     const biteK = Math.min(1, this.baseHitFlash / 0.3);
     if (this.baseHitFlash > 0) this.baseHitFlash -= 1 / 60;
-    ctx.fillStyle = "#996b3f";
+    ctx.fillStyle = armored ? "#6a86c2" : "#996b3f";
     ctx.fillRect(0, 0, 24, h);
+    if (armored) {
+      // 护盾镀光:右缘蓝晕脉动
+      const armK = (Math.sin((this.time / 1000) * 5) + 1) / 2;
+      ctx.fillStyle = `rgba(110,170,255,${0.35 + 0.25 * armK})`;
+      ctx.fillRect(0, 0, 10, h);
+      ctx.fillStyle = `rgba(110,170,255,${0.18 + 0.12 * armK})`;
+      ctx.fillRect(10, 0, 14, h);
+    }
     // 基地血量竖向条(左墙上缘→下缘),颜色随血量满→红渐变
     const baseRatio = Math.max(0, Math.min(1, this.battle.baseHp / 100));
     const barH = Math.max(0, (h - 8) * baseRatio);

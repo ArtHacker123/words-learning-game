@@ -132,6 +132,9 @@ button:disabled { opacity: 0.4; cursor: default; }
 #upgradeBtn:hover { background: #8a6abe; }
 #upgradeBtn.on { background: #9a6ae0; box-shadow: 0 0 10px rgba(154, 106, 224, 0.8); }
 
+#armorBtn { background: #4a7a9a; font-weight: 700; }
+#armorBtn:hover { background: #6a9abe; }
+
 #returnBtn { background: #4a5a6a; font-weight: 700; }
 #returnBtn:hover { background: #5a7a9a; }
 

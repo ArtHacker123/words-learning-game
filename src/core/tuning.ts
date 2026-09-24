@@ -40,6 +40,8 @@ export const TUNING = {
   bossStunScale: 0.4, // Boss 冻结时长系数(2.5*0.4=1s)
   eatPlantSeconds: 2, // 僵尸撞上植物后啃食时长,期间植物不消失、僵尸不前进
   baseSiegeInterval: 2, // 到岸僵尸每隔 2 秒咬一口基地(每口伤害见 battle.damageOnReach)
+  baseArmorSeconds: 6, // 基地护甲:激活后持续时长(s),期间僵尸攻击力减半,到时恢复
+  baseArmorDiamondCost: 1, // 基地护甲:消耗钻石数(钻石需「五幕全通+基地无损」积累)
 } as const;
 
 /** 场面递进:各幕同时在场僵尸数 / 出怪间隔(秒) / 并行出怪概率(0=永不,1=总是) */

@@ -69,6 +69,7 @@ export class UI {
     onToggleUpgradeMode?: () => void;
     onUpgradeBuy?: (key: string) => void;
     onUpgradeClose?: () => void;
+    onBuyBaseArmor?: () => void;
   } = {};
 
   private bannerTimer = 0; // 报幕浮层自动消失计时
@@ -91,6 +92,7 @@ export class UI {
         <div>幕 <span id="act">-</span></div>
         <div>连击 <span id="combo">0</span></div>
         <button id="upgradeBtn">升级</button>
+        <button id="armorBtn" title="花 1💎 激活基地护甲 6 秒:期间僵尸攻击力减半">🛡 基地护甲</button>
         <button id="returnBtn">返回</button>
       </header>
       <section id="screen"></section>
@@ -178,6 +180,7 @@ export class UI {
     });
     this.root.querySelector("#importMoreBtn")!.addEventListener("click", () => this.bindStartPage());
     this.setUpgradeBtn(false);
+    this.setArmorBtn(false);
     this.setReturnBtn(false);
     this.closeUpgradePanel();
   }
@@ -193,6 +196,7 @@ export class UI {
     holder.querySelector("#tray")!.appendChild(tray);
     holder.querySelector("#field")!.appendChild(canvas);
     this.setUpgradeBtn(true);
+    this.setArmorBtn(true);
     this.setReturnBtn(true);
     this.updateHud();
   }
@@ -205,6 +209,16 @@ export class UI {
     btn.classList.remove("on"); // 重建战场先复位激活态
     if (visible) {
       btn.onclick = () => this.handlers.onToggleUpgradeMode?.();
+    }
+  }
+
+  /** 战斗中的「基地护甲」按钮显隐:仅战斗时显示,点击即购买(1💎,6s 减伤)。 */
+  setArmorBtn(visible: boolean): void {
+    const btn = this.root.querySelector<HTMLButtonElement>("#armorBtn");
+    if (!btn) return;
+    btn.style.display = visible ? "" : "none";
+    if (visible) {
+      btn.onclick = () => this.handlers.onBuyBaseArmor?.();
     }
   }
 
@@ -377,6 +391,7 @@ export class UI {
   onToggleUpgradeMode(fn: () => void): void { this.handlers.onToggleUpgradeMode = fn; }
   onUpgradeBuy(fn: (key: string) => void): void { this.handlers.onUpgradeBuy = fn; }
   onUpgradeClose(fn: () => void): void { this.handlers.onUpgradeClose = fn; }
+  onBuyBaseArmor(fn: () => void): void { this.handlers.onBuyBaseArmor = fn; }
 }
 
 /** 从文本行导入(每行:外语,中文) */

@@ -339,6 +339,26 @@ async function runSession(
     ui.renderMainMenu();
   };
 
+  // 基地护甲:HUD「🛡 基地护甲」按钮 → 花 1💎 激活 6 秒减伤(钻石即时扣,护甲仅本局有效)
+  ui.onBuyBaseArmor(async () => {
+    if (battle.isOver()) return;
+    if (battle.baseArmorActive()) {
+      ui.setMsg("基地护甲已生效,稍等约 6 秒后再买");
+      return;
+    }
+    let diamond = (await getMeta(profile, "diamond")) ?? 0;
+    if (diamond < TUNING.baseArmorDiamondCost) {
+      ui.setMsg("钻石不足:五幕全通 + 基地无损可得💎");
+      return;
+    }
+    diamond -= TUNING.baseArmorDiamondCost;
+    await setMeta(profile, "diamond", diamond);
+    ui.state.diamond = diamond;
+    battle.activateBaseArmor();
+    ui.setMsg("🛡 基地护甲激活:6 秒内僵尸攻击力减半");
+    updateHud(ui, battle);
+  });
+
   async function finishSession(): Promise<void> {
     ui.setMsg("");
     ui.closeUpgradePanel(); // 结束即清理战场残留(消息/升级面板)

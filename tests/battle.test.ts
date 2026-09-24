@@ -752,6 +752,57 @@ describe("僵尸攻城基地", () => {
   });
 });
 
+describe("基地护甲(1💎 激活 6s 减伤)", () => {
+  it("激活前:普通怪每口 6", () => {
+    const b = newBattle([], {});
+    const z = makeZombie({ wordId: "a", direction: "forward", teaching: false, boss: false }, 0, undefined, 5);
+    expect(b.damageOnReach(z)).toBe(6);
+    expect(b.baseArmorActive()).toBe(false);
+  });
+
+  it("激活后:僵尸攻击力减半(向上取整),6s 后恢复", () => {
+    const b = newBattle([], {});
+    b.activateBaseArmor();
+    expect(b.baseArmorActive()).toBe(true);
+    const normal = makeZombie({ wordId: "a", direction: "forward", teaching: false, boss: false }, 0, undefined, 5);
+    expect(b.damageOnReach(normal)).toBe(3); // 6 → 3
+    const boss = makeZombie({ wordId: "a", direction: "forward", teaching: false, boss: true }, 0, undefined, 5);
+    expect(b.damageOnReach(boss)).toBe(8); // 16 → 8
+    const ultimate = makeZombie({ wordId: "a", direction: "forward", teaching: false, boss: true, act: 5, ultimate: true, cycle: [{ wordId: "a", direction: "forward" }] }, 0, undefined, 5);
+    expect(b.damageOnReach(ultimate)).toBe(10); // 20 → 10
+    // 时间推进超 6s → 护甲失效,恢复满伤害
+    b.tick(TUNING.baseArmorSeconds + 0.1);
+    expect(b.baseArmorActive()).toBe(false);
+    expect(b.damageOnReach(normal)).toBe(6);
+  });
+
+  it("激活后到岸咬击实际减半:两口护甲(每口 3)≈ 一口无护甲(6)", () => {
+    const b = newBattle([], {});
+    b.baseHp = 12;
+    b.activateBaseArmor();
+    const z = makeZombie({ wordId: "a", direction: "forward", teaching: false, boss: false }, 0, undefined, 5);
+    b.zombies.push(z);
+    b.tick(0.1); // 到岸咬第一口(护甲 3)
+    expect(b.baseHp).toBe(9);
+    b.tick(2.1); // 第二口(护甲 3):累计只掉 6
+    expect(b.baseHp).toBe(6);
+  });
+
+  it("re-activate 刷新持续时长(不叠加)", () => {
+    const b = newBattle([], {});
+    b.lastAct = 5; // 避免空场首帧触发"胜利结束"提前 return,阻止后续 tick 推进时间
+    b.tick(1); // time=1
+    b.activateBaseArmor(); // until=7
+    expect(b.baseArmorActive()).toBe(true);
+    b.tick(3); // time=4,仍有 3s
+    b.activateBaseArmor(); // 刷新为 time+6=10
+    b.tick(5.5); // time=9.5 < 10:仍生效
+    expect(b.baseArmorActive()).toBe(true);
+    b.tick(1); // time=10.5 > 10:失效
+    expect(b.baseArmorActive()).toBe(false);
+  });
+});
+
 describe("消灭僵尸的按幕阳光奖励", () => {
   it("Act1 击杀 +50,Act4 击杀 +200", () => {
     const b = newBattle();

@@ -91,6 +91,7 @@ export class Battle {
   shockwaves: Shockwave[] = [];
   sun = 100;
   baseHp = 100;
+  baseArmorUntil = 0; // 基地护甲激活的绝对战斗时刻截止点(<=this.time 表示未激活)
   combo = 0;
   maxCombo = 0;
   time = 0;
@@ -410,10 +411,26 @@ export class Battle {
 
   damageOnReach(z: Zombie): number {
     // 到岸僵尸每次咬基地的伤害(每 baseSiegeInterval 秒咬一口):教学/弱怪低,头目高,终局最高
-    if (z.ultimate) return TUNING.ultimateSiegeDamage;
-    if (z.boss) return 16;
-    if (z.teaching) return 2;
-    return 6;
+    const base = z.ultimate
+      ? TUNING.ultimateSiegeDamage
+      : z.boss
+        ? 16
+        : z.teaching
+          ? 2
+          : 6;
+    // 基地护甲生效期间:僵尸攻击力减半(向上取整,至少 1)
+    if (this.baseArmorActive()) return Math.max(1, Math.ceil(base / 2));
+    return base;
+  }
+
+  /** 基地护甲是否生效:激活时长 baseArmorSeconds 内有效,到时自动失效。 */
+  baseArmorActive(): boolean {
+    return this.time < this.baseArmorUntil;
+  }
+
+  /** 激活基地护甲(升级面板「基地护甲」购买):从当前时刻起持续 baseArmorSeconds。 */
+  activateBaseArmor(): void {
+    this.baseArmorUntil = this.time + TUNING.baseArmorSeconds;
   }
 
   /** 僵尸精灵可视半径(与 renderer.placeholderDrawer 的 r 同步):
