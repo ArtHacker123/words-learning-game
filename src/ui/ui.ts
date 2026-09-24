@@ -89,6 +89,7 @@ export class UI {
         <div>幕 <span id="act">-</span></div>
         <div>连击 <span id="combo">0</span></div>
         <button id="upgradeBtn">升级</button>
+        <button id="returnBtn">返回</button>
       </header>
       <section id="screen"></section>
     </div>`;
@@ -175,22 +176,22 @@ export class UI {
     });
     this.root.querySelector("#importMoreBtn")!.addEventListener("click", () => this.bindStartPage());
     this.setUpgradeBtn(false);
+    this.setReturnBtn(false);
     this.closeUpgradePanel();
   }
 
-  renderBattle(canvas: HTMLCanvasElement, tray: HTMLElement, btnPause: HTMLElement): void {
+  renderBattle(canvas: HTMLCanvasElement, tray: HTMLElement): void {
     this.screen(`
       <div class="battle">
         <canvas id="field"></canvas>
         <div id="tray"></div>
-        <button id="pauseBtn">暂停</button>
         <div id="battleMsg"></div>
       </div>`);
     const holder = this.root.querySelector("#screen")!;
     holder.querySelector("#tray")!.appendChild(tray);
     holder.querySelector("#field")!.appendChild(canvas);
-    holder.querySelector("#pauseBtn")!.appendChild(btnPause);
     this.setUpgradeBtn(true);
+    this.setReturnBtn(true);
     this.updateHud();
   }
 
@@ -202,6 +203,13 @@ export class UI {
     if (visible) {
       btn.onclick = () => this.handlers.onToggleUpgradeMode?.();
     }
+  }
+
+  /** 战斗中的返回按钮显隐:仅战斗时可用,点击行为由 app 通过 onclick 覆盖绑定。 */
+  setReturnBtn(visible: boolean): void {
+    const btn = this.root.querySelector<HTMLButtonElement>("#returnBtn");
+    if (!btn) return;
+    btn.style.display = visible ? "" : "none";
   }
 
   /** 单株升级面板(角落浮层,不挡战场):以株名词条 + 升级项列表 + 购买/关闭。 */

@@ -143,7 +143,6 @@ export async function initApp(): Promise<void> {
     ui.renderBattle(
       document.createElement("canvas"),
       document.createElement("div"),
-      document.createElement("button"),
     );
     await runSession(ui, profile, plan.day, ui.state.sessionIdx, 0);
   });
@@ -202,7 +201,7 @@ async function runSession(
 
   const field = document.querySelector<HTMLCanvasElement>("#field")!;
   const trayEl = document.querySelector<HTMLElement>("#tray")!;
-  const pauseBtn = document.querySelector<HTMLButtonElement>("#pauseBtn")!;
+  const returnBtn = document.querySelector<HTMLButtonElement>("#returnBtn")!;
 
   // 幕参数:出怪节奏/同时在场数/并行概率逐幕递进(设计 6.3 Act escalation,tuning.ACT_PRESSURE)
   const actNames = ["", "第一幕 教学", "第二幕 演练", "第三幕 复习", "第四幕 头目", "第五幕 终局"];
@@ -313,12 +312,13 @@ async function runSession(
     updateHud(ui, battle);
   });
 
-  pauseBtn.textContent = "暂停";
-  pauseBtn.addEventListener("click", () => {
-    if (!battle.isOver()) {
-      location.reload();
-    }
-  });
+  // 返回:HUD 右上按钮,停止渲染环回主菜单(进度不结算)。onclick 覆盖式赋值,重开不叠监听。
+  returnBtn.onclick = () => {
+    if (battle.isOver()) return;
+    renderer.stop();
+    ui.clearOverlays();
+    ui.renderMainMenu();
+  };
 
   async function finishSession(): Promise<void> {
     ui.setMsg("");
@@ -407,7 +407,6 @@ async function runSession(
             ui.renderBattle(
               document.createElement("canvas"),
               document.createElement("div"),
-              document.createElement("button"),
             );
             void runSession(ui, profile, day, nextIdx, 0);
           },
@@ -440,7 +439,6 @@ async function runSession(
     ui.renderBattle(
       document.createElement("canvas"),
       document.createElement("div"),
-      document.createElement("button"),
     );
     void runSession(ui, profile, plan.day, chunkIdx, failIdx, snapshotAtActStart[failIdx]?.sun, snapshotAtActStart[failIdx]?.baseHp);
   }
