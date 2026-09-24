@@ -200,9 +200,17 @@ export class UI {
     const btn = this.root.querySelector<HTMLButtonElement>("#upgradeBtn");
     if (!btn) return;
     btn.style.display = visible ? "" : "none";
+    btn.classList.remove("on"); // 重建战场先复位激活态
     if (visible) {
       btn.onclick = () => this.handlers.onToggleUpgradeMode?.();
     }
+  }
+
+  /** 升级模式的激活态:进入时点亮按钮,退出熄灭。 */
+  setUpgradeActive(on: boolean): void {
+    const btn = this.root.querySelector<HTMLButtonElement>("#upgradeBtn");
+    if (!btn) return;
+    btn.classList.toggle("on", on);
   }
 
   /** 战斗中的返回按钮显隐:仅战斗时可用,点击行为由 app 通过 onclick 覆盖绑定。 */
@@ -250,6 +258,12 @@ export class UI {
 
   closeUpgradePanel(): void {
     this.root.querySelector("#upgradePanel")?.remove();
+  }
+
+  /** 导入回显(导入页 #importMsg):成功/跳过/坏行统计。 */
+  setImportMsg(text: string): void {
+    const el = this.root.querySelector<HTMLElement>("#importMsg");
+    if (el) el.textContent = text;
   }
 
   /** 升级面板是否打开(供 onFrame 按当前阳光刷新购买按钮可用性)。 */
@@ -326,10 +340,14 @@ export class UI {
     this.state.log.push(msg);
   }
 
-  /** 战斗提示(顶部信息条) */
+  /** 战斗提示(顶部浮动 toast):重触发淡入→驻留→淡出,连续消息不重叠。 */
   setMsg(msg: string): void {
-    const el = this.root.querySelector("#battleMsg")!;
+    const el = this.root.querySelector<HTMLElement>("#battleMsg")!;
     el.textContent = msg;
+    el.classList.remove("toast"); // 重触发动画
+    void el.offsetWidth;
+    if (msg) el.classList.add("toast");
+    else el.classList.remove("toast");
   }
 
   onImport(fn: (lines: string[]) => void): void { this.handlers.onImport = fn; }

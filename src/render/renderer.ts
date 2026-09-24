@@ -55,6 +55,8 @@ export class BattleRenderer {
   private selected: Plant | null = null;
   private shots: Shot[] = [];
   private flashes = new Map<string, number>(); // 僵尸受击闪烁剩余时间
+  // 浮动文字反馈(命中时"×N连击"、错配"错配!")向上飘 + 淡出
+  private floaters: { x: number; y: number; text: string; color: string; t0: number }[] = [];
   private baseHitFlash = 0; // 基地被咬一口后的红闪剩余秒数
   // 僵尸死亡倒地特效(renderer 层快照,不改动战斗逻辑)
   private zSnap = new Map<string, { x: number; lane: number; boss: boolean; buffed: boolean; wordId: string; direction: "forward" | "reverse"; ultimate: boolean }>();
@@ -67,6 +69,14 @@ export class BattleRenderer {
   /** 基地被咬一口:触发一次短促红闪(由 onBaseHit 接入) */
   flashBase(): void {
     this.baseHitFlash = 0.3;
+  }
+
+  /** 在战场某点浮出文字反馈(命中连击 / 错配警示)。 */
+  spawnFloater(zombie: Zombie, text: string, color: string): void {
+    const y = zombie.ultimate
+      ? this.canvas.clientHeight / 2 - this.canvas.clientHeight / this.battle.laneCount
+      : zombie.lane * (this.canvas.clientHeight / this.battle.laneCount) + this.canvas.clientHeight / this.battle.laneCount / 2 - 34;
+    this.floaters.push({ x: zombie.x + 30, y, text, color, t0: this.time });
   }
 
   /** 发射动画:一粒炮弹从植物飞向僵尸(指定到达时间,约300ms) */
@@ -145,6 +155,13 @@ export class BattleRenderer {
     if (this.baseHitFlash > 0) this.baseHitFlash -= 1 / 60;
     ctx.fillStyle = "#996b3f";
     ctx.fillRect(0, 0, 24, h);
+    // 基地血量竖向条(左墙上缘→下缘),颜色随血量满→红渐变
+    const baseRatio = Math.max(0, Math.min(1, this.battle.baseHp / 100));
+    const barH = Math.max(0, (h - 8) * baseRatio);
+    ctx.fillStyle = "rgba(0,0,0,0.4)";
+    ctx.fillRect(3, 4, 5, h - 8);
+    ctx.fillStyle = baseRatio > 0.5 ? "#8fd14f" : baseRatio > 0.25 ? "#e8c34a" : "#ff5a3c";
+    ctx.fillRect(3, 4 + (h - 8 - barH), 5, barH);
     ctx.fillStyle = "#d8a25e";
     ctx.fillRect(0, h - 26, 24, 6);
     if (besieged || biteK > 0) {
@@ -171,6 +188,8 @@ export class BattleRenderer {
     for (const s of this.shots) {
       this.drawShot(ctx, s, laneH);
     }
+    // 浮动文字反馈(命中连击/错配),上飘淡出
+    this.drawFloaters(ctx);
     // 终局冲击波:竖排光带右→左横扫(绘制在植物之上,揭示威压)
     for (const sw of this.battle.shockwaves) {
       this.drawShockwave(ctx, sw.x, sw.speed);
@@ -247,8 +266,14 @@ export class BattleRenderer {
     for (const s of this.shots) {
       s.t += 1 / 60;
       if (s.t >= s.dur) {
-        // 炮弹到达:若命中,僵尸受击闪烁一下
-        if (s.hit) this.flashes.set(s.zid, 0.25);
+        // 炮弹到达:命中→受击白闪 + 连击文字;miss→错配警示文字
+        const z = this.battle.zombies.find((zz) => zz.id === s.zid);
+        if (s.hit) {
+          this.flashes.set(s.zid, 0.25);
+          if (z && this.battle.combo >= 2) this.spawnFloater(z, `×${this.battle.combo}`, "#ffd25e");
+        } else if (z) {
+          this.spawnFloater(z, "错配!", "#ff6a5a");
+        }
       } else {
         remaining.push(s);
       }
@@ -259,6 +284,27 @@ export class BattleRenderer {
       const next = t - 1 / 60;
       if (next <= 0) this.flashes.delete(id);
       else this.flashes.set(id, next);
+    }
+    // 浮动文字老化(约 0.9s 后移除)
+    for (let i = this.floaters.length - 1; i >= 0; i--) {
+      if ((this.time - this.floaters[i].t0) / 1000 > 0.9) this.floaters.splice(i, 1);
+    }
+  }
+
+  /** 浮动文字:向上飘 + 淡出 */
+  private drawFloaters(ctx: CanvasRenderingContext2D): void {
+    for (const f of this.floaters) {
+      const age = (this.time - f.t0) / 1000;
+      const k = Math.min(1, age / 0.9);
+      ctx.save();
+      ctx.globalAlpha = 1 - k * k;
+      ctx.font = "bold 16px sans-serif";
+      ctx.textAlign = "center";
+      ctx.shadowColor = "rgba(0,0,0,0.6)";
+      ctx.shadowBlur = 4;
+      ctx.fillStyle = f.color;
+      ctx.fillText(f.text, f.x, f.y - k * 30);
+      ctx.restore();
     }
   }
 

@@ -53,18 +53,33 @@ export async function initApp(): Promise<void> {
   root.addEventListener("click", () => { /* keep layout simple */ });
 
   ui.onImport(async (lines) => {
+    const total = lines.filter((l) => l.trim()).length;
     const pairs = parseWordLines(lines);
-    if (!pairs.length) return;
+    if (!total) {
+      ui.setImportMsg("未解析到词条:每行格式「外语,中文」");
+      return;
+    }
     const existing = new Set((await getAllWords(profile)).map((w) => w.id));
     const words: Word[] = [];
+    let dup = 0;
     for (const p of pairs) {
       const id = wordHash(p.foreign, p.chinese);
-      if (existing.has(id)) continue;
+      if (existing.has(id)) {
+        dup += 1;
+        continue;
+      }
       const fresh: Word = { id, foreign: p.foreign, chinese: p.chinese, profile };
       words.push(fresh);
     }
     if (words.length) await saveWords(profile, words);
+    const bad = total - pairs.length;
     ui.log(`导入 ${words.length} 词`);
+    const note = `新增 ${words.length} 词${dup ? ` · 重复跳过 ${dup}` : ""}${bad ? ` · 格式忽略 ${bad} 行` : ""}`;
+    if (words.length) ui.setImportMsg(`${note} → 已加入词库。`);
+    else if (dup) ui.setImportMsg(`全部为已收录词(重复 ${dup}),未新增。`);
+    else ui.setImportMsg(`未新增词${bad ? `:${bad} 行格式无法解析` : ""}。`);
+    // 短暂停留读导入结果(须在替换模板渲染前显示),随后回主菜单
+    await new Promise((r) => setTimeout(r, 1100));
     await refreshMenu();
   });
 
@@ -270,6 +285,7 @@ async function runSession(
   const renderer = new BattleRenderer(field, battle, words, {
     onFrame: () => {
       updateHud(ui, battle);
+      refreshTraySun(battle.sun); // 阳光增长 → 卡片解除置灰
       if (ui.upgradeOpen()) ui.refreshUpgradePanel(battle.sun); // 阳光够即启用购买按钮
       // 幕完成:该幕出过怪且已清场 → 自动进入下一幕
       if (battle.currentAct > 0 && battle.isWaveCleared() && actIdx < activeActs.length - 1 && !battle.isOver()) {
@@ -303,11 +319,14 @@ async function runSession(
       renderer.setSelected(null);
       battle.paused = false; // 再点升级按钮退出 → 战斗恢复
       ui.setMsg("");
+      ui.setUpgradeActive(false);
     } else {
+      clearCardHighlight();
       gameMode = { kind: "upgrade-select" };
       renderer.setSelected(null);
       battle.paused = true; // 进入升级选择 → 战斗冻结,便于从容选株购买
       ui.setMsg("升级模式(战斗已暂停):点已种植物打开升级面板,点空地恢复");
+      ui.setUpgradeActive(true);
     }
     updateHud(ui, battle);
   });
@@ -452,6 +471,8 @@ function buildTray(
   ui: UI,
 ): void {
   tray.innerHTML = "";
+  clearCardHighlight();
+  trayCards = []; // 重建育苗盘:清空上局登记的卡片引用
   // 育苗盘分区:中文卡(正向标签)一组、外语卡(反向标签)一组,各自组内随机,
   // 避免中/外混排的成对规律与查找成本;区与区之间由分组容器视觉分隔。
   const buildGroup = (title: string, group: { wordId: string; dir: import("./core/model").Direction }[]): void => {
@@ -467,16 +488,20 @@ function buildTray(
       const label = dir === "forward" ? w.chinese : w.foreign;
       const btn = document.createElement("button");
       btn.className = "card";
-      btn.textContent = label;
       btn.dataset.wordId = id;
       btn.dataset.dir = dir;
       btn.title = `${w.foreign} ↔ ${w.chinese}`;
+      btn.innerHTML = `<span class="card-cost">☀${TUNING.plantCostSun}</span>${label}`;
       btn.addEventListener("click", () => {
-        // 点卡:取消正在进行的开火意图,进入种植模式
+        // 点卡:取消正在进行的开火意图,进入种植模式并高亮本卡
+        clearCardHighlight();
         gameMode = { kind: "planting", w, label };
+        selectedCard = btn;
+        btn.classList.add("selected");
         renderer.setSelected(null);
         ui.setMsg(`已选「${label}」,点击场地空格种植`);
       });
+      trayCards.push(btn);
       panel.appendChild(btn);
     }
     tray.appendChild(panel);
@@ -513,6 +538,25 @@ type GameMode =
   | null;
 let gameMode: GameMode = null;
 
+/** 育苗盘全局态:建盘时登记全部卡,供 onFrame 实时刷新阳光可用性;selectedCard 标记当前选中的卡 */
+let trayCards: HTMLButtonElement[] = [];
+let selectedCard: HTMLButtonElement | null = null;
+
+/** 刷新育苗盘卡片的阳光可用性(阳光不足置灰);同时维护成本角标。 */
+function refreshTraySun(sun: number): void {
+  for (const btn of trayCards) {
+    btn.disabled = sun < TUNING.plantCostSun;
+  }
+}
+
+/** 清除选中的卡片高亮(点空地/种植成功/退出升级时调用)。 */
+function clearCardHighlight(): void {
+  if (selectedCard) {
+    selectedCard.classList.remove("selected");
+    selectedCard = null;
+  }
+}
+
 /** 挂一次常驻点击处理器:选苗/种植/点火/升级都在这里分派 */
 function bindFieldClick(battle: Battle, field: HTMLCanvasElement, ui: UI, renderer: BattleRenderer, words: Map<string, Word>): void {
   const laneH = () => field.getBoundingClientRect().height / TUNING.laneCount;
@@ -540,12 +584,14 @@ function bindFieldClick(battle: Battle, field: HTMLCanvasElement, ui: UI, render
     openUpgrade(p); // 重绘面板(刷新可用/满级/价格)
   });
   ui.onUpgradeClose(() => {
+    clearCardHighlight();
     upgradePlantNow = null;
     renderer.setSelected(null);
     ui.closeUpgradePanel();
     gameMode = null;
     battle.paused = false; // 关闭升级面板 → 战斗恢复
     ui.setMsg("");
+    ui.setUpgradeActive(false);
   });
 
   // 右键已种植物 → 移出并退阳光
@@ -611,6 +657,7 @@ function bindFieldClick(battle: Battle, field: HTMLCanvasElement, ui: UI, render
         return;
       }
       // 种下即自动装填:进入该株开火待命(不自动攻击,等玩家点击僵尸发射)
+      clearCardHighlight();
       ui.setMsg(willReplace ? `「${label}」已自动装填✓(替换了同 lane 旧株),点同 lane 僵尸开火` : `「${label}」已自动装填✓,点同 lane 僵尸开火(错打会激怒它)`);
       gameMode = { kind: "firing", plant };
       renderer.setSelected(plant);
@@ -650,10 +697,14 @@ function bindFieldClick(battle: Battle, field: HTMLCanvasElement, ui: UI, render
 
     // 4) 空点取消选择(升级模式→退出升级模式;开火/种植→取消)
     const wasUpgrade = gameMode?.kind === "upgrade-select";
+    clearCardHighlight();
     ui.closeUpgradePanel();
     renderer.setSelected(null);
     gameMode = null;
-    if (wasUpgrade) battle.paused = false; // 升级模式点空地=恢复战斗
+    if (wasUpgrade) {
+      battle.paused = false; // 升级模式点空地=恢复战斗
+      ui.setUpgradeActive(false);
+    }
   });
 }
 
